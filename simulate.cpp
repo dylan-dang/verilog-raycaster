@@ -1,4 +1,4 @@
-#define vmodule   Vraytracer
+#define vmodule   Vraycaster
 #define STR(x)    #x
 #define HEADER(x) STR(x.h)
 
