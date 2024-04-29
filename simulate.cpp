@@ -97,6 +97,16 @@ int main(int argc, char* argv[]) {
             // quit when q is pressed
             if (keyb_state[SDL_SCANCODE_Q]) break;
 
+            // read player movement
+            mod->mvmt_in =
+                ((keyb_state[SDL_SCANCODE_UP] || keyb_state[SDL_SCANCODE_W])
+                 << 3) |
+                ((keyb_state[SDL_SCANCODE_DOWN] || keyb_state[SDL_SCANCODE_S])
+                 << 2) |
+                ((keyb_state[SDL_SCANCODE_LEFT] || keyb_state[SDL_SCANCODE_A])
+                 << 1) |
+                (keyb_state[SDL_SCANCODE_RIGHT] || keyb_state[SDL_SCANCODE_D]);
+
             SDL_UpdateTexture(sdl_texture, NULL, screenbuffer,
                               H_RES * sizeof(Pixel));
             SDL_RenderClear(sdl_renderer);
