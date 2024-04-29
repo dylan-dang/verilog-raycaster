@@ -60,8 +60,12 @@ module raytracer (  // coordinate width
 
     /* --------------------------- Movement --------------------------- */
 
-    logic[$clog2(ANGLES)-1:0] pa;
-    fix_t px, py, pdx, pdy;
+    localparam INIT_ANGLE = PI / 2;
+    logic[$clog2(ANGLES)-1:0] pa = ($clog2(ANGLES))'($rtoi(INIT_ANGLE/(2*PI)*ANGLES));
+    fix_t px = 16'd20 << 8;
+    fix_t py = 16'd20 << 8;
+    fix_t pdx = fix_t'($rtoi((SPEED*$cos(INIT_ANGLE)) * 2**8));
+    fix_t pdy = fix_t'($rtoi((SPEED*$sin(INIT_ANGLE)) * 2**8));
     wire forward, backward, left, right;
     assign { forward, backward, left, right } = mvmt_in;
 

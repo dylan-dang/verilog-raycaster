@@ -8,7 +8,7 @@ build: raycaster.sv
 	make -C ./obj_dir -f Vraycaster.mk
 
 run:
-	./obj_dir/raytracer
+	./obj_dir/raycaster
 
 start: build run
 
