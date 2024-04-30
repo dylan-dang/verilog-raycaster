@@ -6,8 +6,6 @@
 
 // Q16.16 fixed point number
 typedef logic signed [31:0] fix_t;
-// Q32.32 fixed point number
-typedef logic [63:0] fix64_t;
 
 typedef struct packed {
     fix_t x;
@@ -96,9 +94,9 @@ module raycaster (  // coordinate width
         begin
             case (quad[17:16] /*int part mod 4*/)
                 2'd0: sin = sin_table[index];
-                2'd1: sin = sin_table[SAMPLES - index];
+                2'd1: sin = sin_table[SAMPLES-1 - index];
                 2'd2: sin = -sin_table[index];
-                2'd3: sin = -sin_table[SAMPLES - index];
+                2'd3: sin = -sin_table[SAMPLES-1 - index];
             endcase
         end
     endfunction
@@ -161,12 +159,12 @@ module raycaster (  // coordinate width
 
     /* --------------------------- Movement --------------------------- */
 
-    localparam real SPEED = 1;
+    localparam real SPEED = 2;
     localparam real TURN_SPEED = 0.05;
-    localparam real INIT_ANGLE = PI / 3;
+    localparam real INIT_ANGLE = 0;
 
     fix_t player_angle = to_fix(INIT_ANGLE);
-    vec_t player = { to_fix((MAP_X * MAP_S) / 2), to_fix((MAP_Y * MAP_S) / 2) };
+    vec_t player = { to_fix(MAP_S * MAP_X / 2), to_fix(MAP_S * MAP_Y / 2) };
     vec_t player_delta = {
         to_fix(SPEED*$cos(INIT_ANGLE)), 
         to_fix(SPEED*$sin(INIT_ANGLE))
@@ -212,124 +210,59 @@ module raycaster (  // coordinate width
 
     /* --------------------------- Raycasting --------------------------- */
 
-    fix_t inv_sqrt_table [63:0];
-
-    generate
-        for(genvar i = 0; i < 64; i++) begin
-            assign inv_sqrt_table[i] = to_fix(1/$sqrt(2**i));
-        end
-    endgenerate
-
-    // function fix_t inv_sqrt(input fix64_t x);
-    //     fix_t g0, g1, g2, g3, g4, g5, g6, g7;
-    //     begin
-    //         if      (x[30]) g0 = 32'sh00000034;
-    //         else if (x[29]) g0 = 32'sh00000049;
-    //         else if (x[28]) g0 = 32'sh00000068;
-    //         else if (x[27]) g0 = 32'sh00000093;
-    //         else if (x[26]) g0 = 32'sh000000d1;
-    //         else if (x[25]) g0 = 32'sh00000127;
-    //         else if (x[24]) g0 = 32'sh000001a2;
-    //         else if (x[23]) g0 = 32'sh0000024f;
-    //         else if (x[22]) g0 = 32'sh00000344;
-    //         else if (x[21]) g0 = 32'sh0000049e;
-    //         else if (x[20]) g0 = 32'sh00000688;
-    //         else if (x[19]) g0 = 32'sh0000093c;
-    //         else if (x[18]) g0 = 32'sh00000d10;
-    //         else if (x[17]) g0 = 32'sh00001279;
-    //         else if (x[16]) g0 = 32'sh00001a20;
-    //         else if (x[15]) g0 = 32'sh000024f3;
-    //         else if (x[14]) g0 = 32'sh00003441;
-    //         else if (x[13]) g0 = 32'sh000049e6;
-    //         else if (x[12]) g0 = 32'sh00006882;
-    //         else if (x[11]) g0 = 32'sh000093cd;
-    //         else if (x[10]) g0 = 32'sh0000d105;
-    //         else if (x[9])  g0 = 32'sh0001279a;
-    //         else if (x[8])  g0 = 32'sh0001a20b;
-    //         else if (x[7])  g0 = 32'sh00024f34;
-    //         else if (x[6])  g0 = 32'sh00034417;
-    //         else if (x[5])  g0 = 32'sh00049e69;
-    //         else if (x[4])  g0 = 32'sh0006882f;
-    //         else if (x[3])  g0 = 32'sh00093cd3;
-    //         else if (x[2])  g0 = 32'sh000d105e;
-    //         else if (x[1])  g0 = 32'sh001279a7;
-    //         else            g0 = 32'sh00200000;
-    //         // Newton's method - x(n+1) =(x(n) * (1.5 - (val * 0.5f * x(n)^2))
-
-    //         // First iteration	
-    //         g1 = mult(g0, to_fix(0.5) - mult(x >>> 1, mult(g0, g0)));
-    //         g2 = mult(g1, to_fix(0.5) - mult(x >>> 1, mult(g1, g1)));
-    //         g3 = mult(g2, to_fix(0.5) - mult(x >>> 1, mult(g2, g2)));
-    //         g4 = mult(g3, to_fix(0.5) - mult(x >>> 1, mult(g3, g3)));
-
-    //         inv_sqrt = g4;
-    //     end
-    // endfunction
-
-/*
-    function line_t cast_ray(fix_t r_angle);
+    function fix_t inv_sqrt(input fix_t x);
+        fix_t threehalfs = to_fix(1.5);
+        fix_t guess;
         begin
-            real angle = to_real(r_angle);
-            logic facing_up = angle > PI;
-            logic facing_left = angle > PI/2 && angle < 3*PI/2;
-
-            logic [$clog2(MAP_Y):0] h_checks = 0;
-            real ncot_ra = -1.0/$tan(angle);
-            real hy = to_real(player.y & 32'hffc00000) + (facing_up ? -0.0001 : MAP_S);
-            real hx = ((to_real(player.y) - hy) * ncot_ra) + to_real(player.x);
-            real hdy = facing_up ? -MAP_S : MAP_S;
-            real hdx = -hdy * ncot_ra;
-            real h_dist = 999999999;
-
-            logic [$clog2(MAP_X):0] v_checks = 0;
-            real ntan_ra = -$tan(angle);
-            real vx = to_real(player.x & 32'hffc00000) + (facing_left ? -0.0001 : MAP_S);
-            real vy = ((to_real(player.x) - vx) * ntan_ra) + to_real(player.y);
-            real vdx = facing_left ? -MAP_S : MAP_S;
-            real vdy = -vdx * ntan_ra;
-            real v_dist = 999999999;
-
-            real rdist;
-            integer mx, my;
-
-            while (h_checks < MAP_Y) begin
-                my = $rtoi(hy/64);
-                mx = $rtoi(hx/64);
-                if (0 <= my && my < MAP_Y && 0 <= mx && mx < MAP_X && map[my][mx]) begin
-                    // wall hit
-                    h_checks = MAP_Y;
-                    h_dist = $hypot(to_real(player.x) - hx, to_real(player.y) - hy);
-                end else begin
-                    hx += hdx;
-                    hy += hdy;
-                    h_checks += 1;
-                end
-            end
-
-            while (v_checks < MAP_X) begin
-                my = $rtoi(vy/64);
-                mx = $rtoi(vx/64);
-                if (0 <= my && my < MAP_Y && 0 <= mx && mx < MAP_X && map[my][mx]) begin
-                    // wall hit
-                    v_checks = MAP_X;
-                    v_dist = $hypot(to_real(player.x) - vx, to_real(player.y) - vy);
-                end else begin
-                    vx += vdx;
-                    vy += vdy;
-                    v_checks += 1;
-                end
-            end
-            
-            cast_ray.is_vert = v_dist < h_dist;
-            rdist = cast_ray.is_vert ? v_dist : h_dist;
-            cast_ray.height = to_fix(MAP_S * V_RES / rdist);
+            if      (x[30]) guess = 32'sh00000034;
+            else if (x[29]) guess = 32'sh00000049;
+            else if (x[28]) guess = 32'sh00000068;
+            else if (x[27]) guess = 32'sh00000093;
+            else if (x[26]) guess = 32'sh000000d1;
+            else if (x[25]) guess = 32'sh00000127;
+            else if (x[24]) guess = 32'sh000001a2;
+            else if (x[23]) guess = 32'sh0000024f;
+            else if (x[22]) guess = 32'sh00000344;
+            else if (x[21]) guess = 32'sh0000049e;
+            else if (x[20]) guess = 32'sh00000688;
+            else if (x[19]) guess = 32'sh0000093c;
+            else if (x[18]) guess = 32'sh00000d10;
+            else if (x[17]) guess = 32'sh00001279;
+            else if (x[16]) guess = 32'sh00001a20;
+            else if (x[15]) guess = 32'sh000024f3;
+            else if (x[14]) guess = 32'sh00003441;
+            else if (x[13]) guess = 32'sh000049e6;
+            else if (x[12]) guess = 32'sh00006882;
+            else if (x[11]) guess = 32'sh000093cd;
+            else if (x[10]) guess = 32'sh0000d105;
+            else if (x[9])  guess = 32'sh0001279a;
+            else if (x[8])  guess = 32'sh0001a20b;
+            else if (x[7])  guess = 32'sh00024f34;
+            else if (x[6])  guess = 32'sh00034417;
+            else if (x[5])  guess = 32'sh00049e69;
+            else if (x[4])  guess = 32'sh0006882f;
+            else if (x[3])  guess = 32'sh00093cd3;
+            else if (x[2])  guess = 32'sh000d105e;
+            else if (x[1])  guess = 32'sh001279a7;
+            else            guess = 32'sh00200000;
+            // Newton's method - x(n+1) =(x(n) * (1.5 - (val/2 * x(n)^2))
+            guess = mult(guess, threehalfs - mult(x >>> 1, mult(guess, guess)));
+            guess = mult(guess, threehalfs - mult(x >>> 1, mult(guess, guess)));
+            guess = mult(guess, threehalfs - mult(x >>> 1, mult(guess, guess)));
+            guess = mult(guess, threehalfs - mult(x >>> 1, mult(guess, guess)));
+            guess = mult(guess, threehalfs - mult(x >>> 1, mult(guess, guess)));
+            guess = mult(guess, threehalfs - mult(x >>> 1, mult(guess, guess)));
+            guess = mult(guess, threehalfs - mult(x >>> 1, mult(guess, guess)));
+            guess = mult(guess, threehalfs - mult(x >>> 1, mult(guess, guess)));
+            guess = mult(guess, threehalfs - mult(x >>> 1, mult(guess, guess)));
+            guess = mult(guess, threehalfs - mult(x >>> 1, mult(guess, guess)));
+            inv_sqrt = guess;
         end
     endfunction
-*/
 
-    function fix64_t sq_dist(vec_t a, vec_t b);
-        fix64_t run = 64'(a.x) - 64'(b.x);
-        fix64_t rise = 64'(a.y) - 64'(b.y);
+    function logic[63:0] sq_dist(vec_t a, vec_t b);
+        logic[63:0] run = 64'(a.x) - 64'(b.x);
+        logic[63:0] rise = 64'(a.y) - 64'(b.y);
         begin
             sq_dist = (run*run + rise*rise);
         end
@@ -339,9 +272,9 @@ module raycaster (  // coordinate width
         vec_t h_ray, v_ray;
         vec_t h_ray_delta, v_ray_delta;
 
-        fix64_t r_dist;
-        fix64_t h_dist = 64'hefff_ffff_ffff_ffff;
-        fix64_t v_dist = 64'hefff_ffff_ffff_ffff;
+        fix_t sqdist;
+        logic[63:0] h_sqdist = 64'hefff_ffff_ffff_ffff;
+        logic[63:0] v_sqdist = 64'hefff_ffff_ffff_ffff;
             
         fix_t ncot_ra = -cot(angle);
         logic facing_up = angle > to_fix(PI);
@@ -361,7 +294,7 @@ module raycaster (  // coordinate width
             if (!near(angle, to_fix(0)) && !near(angle, to_fix(PI))) begin
                 for (integer h_check = 0; h_check < MAP_Y; h_check++) begin
                     if (is_clipping(h_ray)) begin
-                        h_dist = sq_dist(player, h_ray);
+                        h_sqdist = sq_dist(player, h_ray);
                         break;
                     end
                     h_ray.x += h_ray_delta.x;
@@ -380,7 +313,7 @@ module raycaster (  // coordinate width
             if (!near(angle, to_fix(PI/2)) && !near(angle, to_fix(3*PI/2))) begin
                 for (integer v_check = 0; v_check < MAP_X; v_check++) begin
                     if (is_clipping(v_ray)) begin
-                        v_dist = sq_dist(player, v_ray);
+                        v_sqdist = sq_dist(player, v_ray);
                         break;
                     end 
                     v_ray.x += v_ray_delta.x;
@@ -389,9 +322,10 @@ module raycaster (  // coordinate width
             end
             
             // -------- get ray height --------
-            cast_ray.is_vert = v_dist < h_dist;
-            r_dist = cast_ray.is_vert ? v_dist : h_dist;
-            cast_ray.height = to_fix(MAP_S * V_RES / $sqrt(32'(r_dist >> 32)));
+            cast_ray.is_vert = v_sqdist < h_sqdist;
+            sqdist = 32'((cast_ray.is_vert ? v_sqdist : h_sqdist) >> 32);
+            sqdist = mult(sqdist, cos(player_angle - angle));
+            cast_ray.height = mult(inv_sqrt(sqdist), to_fix(H_RES / 4));
         end
     endfunction
 
@@ -443,10 +377,11 @@ module raycaster (  // coordinate width
     //         (32'(sx) <  ((player.x + 4 * player_delta.x) >> 16) + P_SIZE) &&
     //         (32'(sy) >= ((player.y + 4 * player_delta.y) >> 16) - P_SIZE) &&
     //         (32'(sy) <  ((player.y + 4 * player_delta.y) >> 16) + P_SIZE);
+    //     logic in_map = sx/MAP_S < MAP_X && sy/MAP_S < MAP_Y;
 
-    //     logic map_draw = (map[sy / MAP_S][sx / MAP_S] && sx % 2 == 0 && sy % 2 == 0);
+    //     logic map_draw = (in_map) && (map[sy / MAP_S][sx / MAP_S]) && (sx % 2 == 0 && sy % 2 == 0);
 
-    //     logic gridline_draw = sy % MAP_S == 0 || sx % MAP_S == 0;
+    //     logic gridline_draw = (in_map) && (sy % MAP_S == 0 || sx % MAP_S == 0);
 
     //     if (!de) begin
     //         // black in blanking interval
