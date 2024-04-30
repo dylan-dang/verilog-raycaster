@@ -283,7 +283,7 @@ module raycaster (  // coordinate width
         logic facing_left = angle > to_fix(PI/2) && angle < to_fix(3*PI/2);
 
         begin
-            // -------- check horizontal lines --------
+            // -------- check horizontal walls --------
             h_ray.y = (player.y & 32'hffc00000) + 
                 (facing_up ? to_fix(-0.001) : to_fix(MAP_S));
             h_ray.x = mult(player.y - h_ray.y, ncot_ra) + player.x;
@@ -302,7 +302,7 @@ module raycaster (  // coordinate width
                 end
             end
 
-            // -------- check vertical lines --------
+            // -------- check vertical walls --------
             v_ray.x = (player.x & 32'hffc00000) + 
                 (facing_left ? to_fix(-0.001) : to_fix(MAP_S));
             v_ray.y = mult(player.x - v_ray.x, ntan_ra) + player.y;
@@ -333,6 +333,7 @@ module raycaster (  // coordinate width
 
     line_t lines [H_RES-1:0];
     always_ff @(posedge clk_in) begin
+        // render on new frame and movement change
         if (frame && |(mvmt_in)) begin
             for (integer i = 0; i < H_RES; i++) begin
                 fix_t angle = (player_angle - to_fix(FOV / 2.0)) +
