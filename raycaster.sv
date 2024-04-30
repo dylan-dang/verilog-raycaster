@@ -3,6 +3,7 @@
 
 `define fmask 32'h0000ffff // fractional part
 `define imask 32'hffff0000 // integer part
+// `define MAP_OVERLAY
 
 // Q16.16 fixed point number
 typedef logic signed [31:0] fix_t;
@@ -365,53 +366,50 @@ module raycaster (  // coordinate width
         end
     end
     
-    // localparam P_SIZE = 5;
-    // always_comb begin
-    //     logic player_draw = 
-    //         (32'(sx) >= (player.x >> 16) - P_SIZE) &&
-    //         (32'(sx) <  (player.x >> 16) + P_SIZE) &&
-    //         (32'(sy) >= (player.y >> 16) - P_SIZE) &&
-    //         (32'(sy) <  (player.y >> 16) + P_SIZE);
+`ifdef MAP_OVERLAY
+    localparam P_SIZE = 5;
+    always_comb begin
+        logic player_draw = 
+            (32'(sx) >= (player.x >> 16) - P_SIZE) &&
+            (32'(sx) <  (player.x >> 16) + P_SIZE) &&
+            (32'(sy) >= (player.y >> 16) - P_SIZE) &&
+            (32'(sy) <  (player.y >> 16) + P_SIZE);
 
-    //     logic player_dir = 
-    //         (32'(sx) >= ((player.x + 4 * player_delta.x) >> 16) - P_SIZE) &&
-    //         (32'(sx) <  ((player.x + 4 * player_delta.x) >> 16) + P_SIZE) &&
-    //         (32'(sy) >= ((player.y + 4 * player_delta.y) >> 16) - P_SIZE) &&
-    //         (32'(sy) <  ((player.y + 4 * player_delta.y) >> 16) + P_SIZE);
-    //     logic in_map = sx/MAP_S < MAP_X && sy/MAP_S < MAP_Y;
+        logic player_dir = 
+            (32'(sx) >= ((player.x + 4 * player_delta.x) >> 16) - P_SIZE) &&
+            (32'(sx) <  ((player.x + 4 * player_delta.x) >> 16) + P_SIZE) &&
+            (32'(sy) >= ((player.y + 4 * player_delta.y) >> 16) - P_SIZE) &&
+            (32'(sy) <  ((player.y + 4 * player_delta.y) >> 16) + P_SIZE);
+        logic in_map = sx/MAP_S < MAP_X && sy/MAP_S < MAP_Y;
 
-    //     logic map_draw = (in_map) && (map[sy / MAP_S][sx / MAP_S]) && (sx % 2 == 0 && sy % 2 == 0);
+        logic map_draw = (in_map) && (map[sy / MAP_S][sx / MAP_S]) && (sx % 2 == 0 && sy % 2 == 0);
 
-    //     logic gridline_draw = (in_map) && (sy % MAP_S == 0 || sx % MAP_S == 0);
+        logic gridline_draw = (in_map) && (sy % MAP_S == 0 || sx % MAP_S == 0);
 
-    //     if (!de) begin
-    //         // black in blanking interval
-    //         paint_r = 4'h0;
-    //         paint_g = 4'h0;
-    //         paint_b = 4'h0;
-    //     end else if (player_draw) begin
-    //         paint_r = 4'hf;
-    //         paint_g = 4'h0;
-    //         paint_b = 4'h0;
-    //     end else if (player_dir) begin
-    //         paint_r = 4'h0;
-    //         paint_g = 4'hf;
-    //         paint_b = 4'h0;
-    //     end else if (gridline_draw) begin
-    //         paint_r = 4'h0;
-    //         paint_g = 4'h0;
-    //         paint_b = 4'h0;
-    //     end else if (map_draw) begin
-    //         paint_r = 4'hf;
-    //         paint_g = 4'hf;
-    //         paint_b = 4'hf;
-    //     end 
-    //     // else begin
-    //     //     paint_r = 4'h1;
-    //     //     paint_g = 4'h3;
-    //     //     paint_b = 4'h7;
-    //     // end
-    // end
+        if (!de) begin
+            // black in blanking interval
+            paint_r = 4'h0;
+            paint_g = 4'h0;
+            paint_b = 4'h0;
+        end else if (player_draw) begin
+            paint_r = 4'hf;
+            paint_g = 4'h0;
+            paint_b = 4'h0;
+        end else if (player_dir) begin
+            paint_r = 4'h0;
+            paint_g = 4'hf;
+            paint_b = 4'h0;
+        end else if (gridline_draw) begin
+            paint_r = 4'h0;
+            paint_g = 4'h0;
+            paint_b = 4'h0;
+        end else if (map_draw) begin
+            paint_r = 4'hf;
+            paint_g = 4'hf;
+            paint_b = 4'hf;
+        end
+    end
+`endif
 
     always_ff @(posedge clk_in) begin
         sx_out <= sx;
