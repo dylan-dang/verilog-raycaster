@@ -6,6 +6,18 @@
 
 // Q16.16 fixed point number
 typedef logic signed [31:0] fix_t;
+// Q32.32 fixed point number
+typedef logic [63:0] fix64_t;
+
+typedef struct packed {
+    fix_t x;
+    fix_t y;
+} vec_t;
+
+typedef struct packed {
+    logic is_vert;
+    fix_t height;
+} line_t;
 
 function fix_t to_fix(input real real_num);
     begin
@@ -15,13 +27,19 @@ endfunction
 
 function real to_real(input fix_t fix_num);
     begin
-        to_real = $itor(32'(fix_num)) / 2**16;
+        to_real = $itor(fix_num) / 2**16;
     end
 endfunction
 
-function fix_t mult(input fix_t a, input fix_t b);
+function fix_t mult(input fix_t a, b);
     begin
         mult = 32'((48'(a * b)) >>> 16);
+    end
+endfunction
+
+function logic near(input fix_t a, b, tolerance = to_fix(0.01));
+    begin
+        near = a > b - tolerance && a < b + tolerance;
     end
 endfunction
 
@@ -72,10 +90,10 @@ module raycaster (  // coordinate width
     endgenerate
 
     function fix_t sin(input fix_t x);
+        fix_t quad = mult(x, to_fix(2 / PI));
+        fix_t entry = mult(quad & `fmask, to_fix(SAMPLES));
+        logic [$clog2(SAMPLES)-1:0] index = entry[15+$clog2(SAMPLES):16];
         begin
-            fix_t quad = mult(x, to_fix(2 / PI));
-            fix_t entry = mult(quad & `fmask, to_fix(SAMPLES));
-            logic [$clog2(SAMPLES)-1:0] index = entry[15+$clog2(SAMPLES):16];
             case (quad[17:16] /*int part mod 4*/)
                 2'd0: sin = sin_table[index];
                 2'd1: sin = sin_table[SAMPLES - index];
@@ -86,15 +104,15 @@ module raycaster (  // coordinate width
     endfunction
     
     function fix_t sec(input fix_t x);
+        fix_t quad = mult(x, to_fix(2 / PI));
+        fix_t entry = mult(quad & `fmask, to_fix(SAMPLES));
+        logic [$clog2(SAMPLES)-1:0] index = entry[15+$clog2(SAMPLES):16];
         begin
-            fix_t quad = mult(x, to_fix(2 / PI));
-            fix_t entry = mult(quad & `fmask, to_fix(SAMPLES));
-            logic [$clog2(SAMPLES)-1:0] index = entry[15+$clog2(SAMPLES):16];
             case (quad[17:16] /*int part mod 4*/)
                 2'd0: sec = sec_table[index];
                 2'd1: sec = -sec_table[SAMPLES - index];
-                2'd2: sec = sec_table[SAMPLES - index];
-                2'd3: sec = -sec_table[index];
+                2'd2: sec = -sec_table[index];
+                2'd3: sec = sec_table[SAMPLES - index];
             endcase
         end
     endfunction
@@ -119,7 +137,7 @@ module raycaster (  // coordinate width
 
     function fix_t cot(input fix_t x);
         begin
-            tan = mult(cos(x), csc(x));
+            cot = mult(cos(x), csc(x));
         end
     endfunction
 
@@ -127,89 +145,344 @@ module raycaster (  // coordinate width
 
     localparam MAP_X = 8;
     localparam MAP_Y = 8;
-    logic map [MAP_X-1:0][MAP_Y-1:0];
+    localparam MAP_S = 64;
+    logic map [MAP_Y-1:0][MAP_X-1:0];
     initial begin
         $readmemh("level.mem", map);
     end
+    
+    function logic is_clipping(input vec_t pos);
+        logic [$clog2(MAP_Y)-1:0] my = pos.y[21 + $clog2(MAP_Y):22];
+        logic [$clog2(MAP_X)-1:0] mx = pos.x[21 + $clog2(MAP_X):22];
+        begin
+            is_clipping = map[my][mx];
+        end
+    endfunction
 
     /* --------------------------- Movement --------------------------- */
 
-    localparam SPEED = to_fix(5);
-    localparam TURN_SPEED = to_fix(0.1);
-    localparam INIT_ANGLE = PI / 2;
+    localparam real SPEED = 1;
+    localparam real TURN_SPEED = 0.05;
+    localparam real INIT_ANGLE = PI / 3;
 
-    fix_t pa = to_fix(INIT_ANGLE);
-    fix_t px = to_fix(1);
-    fix_t py = to_fix(1);
-    fix_t pdx = to_fix(SPEED*$cos(INIT_ANGLE));
-    fix_t pdy = to_fix(SPEED*$sin(INIT_ANGLE));
+    fix_t player_angle = to_fix(INIT_ANGLE);
+    vec_t player = { to_fix((MAP_X * MAP_S) / 2), to_fix((MAP_Y * MAP_S) / 2) };
+    vec_t player_delta = {
+        to_fix(SPEED*$cos(INIT_ANGLE)), 
+        to_fix(SPEED*$sin(INIT_ANGLE))
+    };
     wire key_up, key_down, key_left, key_right;
     assign { key_up, key_down, key_left, key_right } = mvmt_in;
 
     always_ff @(posedge clk_in) begin
         if (frame) begin
-            if (key_left) begin
-                pa += TURN_SPEED;
-                if (pa < to_fix(0)) pa+=to_fix(2*PI);
-                pdx <= mult(SPEED, cos(pa));
-                pdy <= mult(SPEED, sin(pa));
-            end
-            if (key_right) begin
-                pa -= TURN_SPEED;
-                if (pa > to_fix(2*PI)) pa-=to_fix(2*PI);
-                pdx <= mult(SPEED, cos(pa));
-                pdy <= mult(SPEED, sin(pa));
-            end
-            if (key_up) begin
-                px += pdx;
-                py += pdy;
-            end
-            if (key_down) begin
-                px -= pdx;
-                py -= pdy;
+            if (key_left || key_right) begin
+                if (key_right) begin
+                    player_angle += to_fix(TURN_SPEED);
+                    if (player_angle >= to_fix(2*PI)) player_angle-=to_fix(2*PI);
+                end
+                if (key_left) begin
+                    player_angle -= to_fix(TURN_SPEED);
+                    if (player_angle < to_fix(0)) player_angle+=to_fix(2*PI);
+                end
+                player_delta.x <= mult(to_fix(SPEED), cos(player_angle));
+                player_delta.y <= mult(to_fix(SPEED), sin(player_angle));
+            end 
+
+            if (key_up || key_down) begin
+                if (key_up) begin
+                    player.x += player_delta.x;
+                    if (is_clipping(player)) player.x -= player_delta.x;
+                    player.y += player_delta.y;
+                    if (is_clipping(player)) player.y -= player_delta.y;
+                end
+                if (key_down) begin
+                    player.x -= player_delta.x;
+                    if (is_clipping(player)) player.x += player_delta.x;
+                    player.y -= player_delta.y;
+                    if (is_clipping(player)) player.y += player_delta.y;
+                end
+                if (player.x < to_fix(5)) player.x = to_fix(5);
+                if (player.y < to_fix(5)) player.y = to_fix(5);
+                if (player.x > to_fix(H_RES)) player.x = to_fix(H_RES);
+                if (player.y > to_fix(V_RES)) player.y = to_fix(V_RES);
             end
         end
     end
 
     /* --------------------------- Raycasting --------------------------- */
-    
-    localparam FOV = to_fix(PI/3); // 60deg
 
+    fix_t inv_sqrt_table [63:0];
+
+    generate
+        for(genvar i = 0; i < 64; i++) begin
+            assign inv_sqrt_table[i] = to_fix(1/$sqrt(2**i));
+        end
+    endgenerate
+
+    // function fix_t inv_sqrt(input fix64_t x);
+    //     fix_t g0, g1, g2, g3, g4, g5, g6, g7;
+    //     begin
+    //         if      (x[30]) g0 = 32'sh00000034;
+    //         else if (x[29]) g0 = 32'sh00000049;
+    //         else if (x[28]) g0 = 32'sh00000068;
+    //         else if (x[27]) g0 = 32'sh00000093;
+    //         else if (x[26]) g0 = 32'sh000000d1;
+    //         else if (x[25]) g0 = 32'sh00000127;
+    //         else if (x[24]) g0 = 32'sh000001a2;
+    //         else if (x[23]) g0 = 32'sh0000024f;
+    //         else if (x[22]) g0 = 32'sh00000344;
+    //         else if (x[21]) g0 = 32'sh0000049e;
+    //         else if (x[20]) g0 = 32'sh00000688;
+    //         else if (x[19]) g0 = 32'sh0000093c;
+    //         else if (x[18]) g0 = 32'sh00000d10;
+    //         else if (x[17]) g0 = 32'sh00001279;
+    //         else if (x[16]) g0 = 32'sh00001a20;
+    //         else if (x[15]) g0 = 32'sh000024f3;
+    //         else if (x[14]) g0 = 32'sh00003441;
+    //         else if (x[13]) g0 = 32'sh000049e6;
+    //         else if (x[12]) g0 = 32'sh00006882;
+    //         else if (x[11]) g0 = 32'sh000093cd;
+    //         else if (x[10]) g0 = 32'sh0000d105;
+    //         else if (x[9])  g0 = 32'sh0001279a;
+    //         else if (x[8])  g0 = 32'sh0001a20b;
+    //         else if (x[7])  g0 = 32'sh00024f34;
+    //         else if (x[6])  g0 = 32'sh00034417;
+    //         else if (x[5])  g0 = 32'sh00049e69;
+    //         else if (x[4])  g0 = 32'sh0006882f;
+    //         else if (x[3])  g0 = 32'sh00093cd3;
+    //         else if (x[2])  g0 = 32'sh000d105e;
+    //         else if (x[1])  g0 = 32'sh001279a7;
+    //         else            g0 = 32'sh00200000;
+    //         // Newton's method - x(n+1) =(x(n) * (1.5 - (val * 0.5f * x(n)^2))
+
+    //         // First iteration	
+    //         g1 = mult(g0, to_fix(0.5) - mult(x >>> 1, mult(g0, g0)));
+    //         g2 = mult(g1, to_fix(0.5) - mult(x >>> 1, mult(g1, g1)));
+    //         g3 = mult(g2, to_fix(0.5) - mult(x >>> 1, mult(g2, g2)));
+    //         g4 = mult(g3, to_fix(0.5) - mult(x >>> 1, mult(g3, g3)));
+
+    //         inv_sqrt = g4;
+    //     end
+    // endfunction
+
+/*
+    function line_t cast_ray(fix_t r_angle);
+        begin
+            real angle = to_real(r_angle);
+            logic facing_up = angle > PI;
+            logic facing_left = angle > PI/2 && angle < 3*PI/2;
+
+            logic [$clog2(MAP_Y):0] h_checks = 0;
+            real ncot_ra = -1.0/$tan(angle);
+            real hy = to_real(player.y & 32'hffc00000) + (facing_up ? -0.0001 : MAP_S);
+            real hx = ((to_real(player.y) - hy) * ncot_ra) + to_real(player.x);
+            real hdy = facing_up ? -MAP_S : MAP_S;
+            real hdx = -hdy * ncot_ra;
+            real h_dist = 999999999;
+
+            logic [$clog2(MAP_X):0] v_checks = 0;
+            real ntan_ra = -$tan(angle);
+            real vx = to_real(player.x & 32'hffc00000) + (facing_left ? -0.0001 : MAP_S);
+            real vy = ((to_real(player.x) - vx) * ntan_ra) + to_real(player.y);
+            real vdx = facing_left ? -MAP_S : MAP_S;
+            real vdy = -vdx * ntan_ra;
+            real v_dist = 999999999;
+
+            real rdist;
+            integer mx, my;
+
+            while (h_checks < MAP_Y) begin
+                my = $rtoi(hy/64);
+                mx = $rtoi(hx/64);
+                if (0 <= my && my < MAP_Y && 0 <= mx && mx < MAP_X && map[my][mx]) begin
+                    // wall hit
+                    h_checks = MAP_Y;
+                    h_dist = $hypot(to_real(player.x) - hx, to_real(player.y) - hy);
+                end else begin
+                    hx += hdx;
+                    hy += hdy;
+                    h_checks += 1;
+                end
+            end
+
+            while (v_checks < MAP_X) begin
+                my = $rtoi(vy/64);
+                mx = $rtoi(vx/64);
+                if (0 <= my && my < MAP_Y && 0 <= mx && mx < MAP_X && map[my][mx]) begin
+                    // wall hit
+                    v_checks = MAP_X;
+                    v_dist = $hypot(to_real(player.x) - vx, to_real(player.y) - vy);
+                end else begin
+                    vx += vdx;
+                    vy += vdy;
+                    v_checks += 1;
+                end
+            end
+            
+            cast_ray.is_vert = v_dist < h_dist;
+            rdist = cast_ray.is_vert ? v_dist : h_dist;
+            cast_ray.height = to_fix(MAP_S * V_RES / rdist);
+        end
+    endfunction
+*/
+
+    function fix64_t sq_dist(vec_t a, vec_t b);
+        fix64_t run = 64'(a.x) - 64'(b.x);
+        fix64_t rise = 64'(a.y) - 64'(b.y);
+        begin
+            sq_dist = (run*run + rise*rise);
+        end
+    endfunction
+
+    function line_t cast_ray(fix_t angle);
+        vec_t h_ray, v_ray;
+        vec_t h_ray_delta, v_ray_delta;
+
+        fix64_t r_dist;
+        fix64_t h_dist = 64'hefff_ffff_ffff_ffff;
+        fix64_t v_dist = 64'hefff_ffff_ffff_ffff;
+            
+        fix_t ncot_ra = -cot(angle);
+        logic facing_up = angle > to_fix(PI);
+
+        fix_t ntan_ra = -tan(angle);
+        logic facing_left = angle > to_fix(PI/2) && angle < to_fix(3*PI/2);
+
+        begin
+            // -------- check horizontal lines --------
+            h_ray.y = (player.y & 32'hffc00000) + 
+                (facing_up ? to_fix(-0.001) : to_fix(MAP_S));
+            h_ray.x = mult(player.y - h_ray.y, ncot_ra) + player.x;
+
+            h_ray_delta.y = facing_up ? to_fix(-MAP_S) : to_fix(MAP_S);
+            h_ray_delta.x = mult(-h_ray_delta.y, ncot_ra);
+
+            if (!near(angle, to_fix(0)) && !near(angle, to_fix(PI))) begin
+                for (integer h_check = 0; h_check < MAP_Y; h_check++) begin
+                    if (is_clipping(h_ray)) begin
+                        h_dist = sq_dist(player, h_ray);
+                        break;
+                    end
+                    h_ray.x += h_ray_delta.x;
+                    h_ray.y += h_ray_delta.y;
+                end
+            end
+
+            // -------- check vertical lines --------
+            v_ray.x = (player.x & 32'hffc00000) + 
+                (facing_left ? to_fix(-0.001) : to_fix(MAP_S));
+            v_ray.y = mult(player.x - v_ray.x, ntan_ra) + player.y;
+
+            v_ray_delta.x = facing_left ? to_fix(-MAP_S) : to_fix(MAP_S);
+            v_ray_delta.y = mult(-v_ray_delta.x, ntan_ra);
+
+            if (!near(angle, to_fix(PI/2)) && !near(angle, to_fix(3*PI/2))) begin
+                for (integer v_check = 0; v_check < MAP_X; v_check++) begin
+                    if (is_clipping(v_ray)) begin
+                        v_dist = sq_dist(player, v_ray);
+                        break;
+                    end 
+                    v_ray.x += v_ray_delta.x;
+                    v_ray.y += v_ray_delta.y;
+                end
+            end
+            
+            // -------- get ray height --------
+            cast_ray.is_vert = v_dist < h_dist;
+            r_dist = cast_ray.is_vert ? v_dist : h_dist;
+            cast_ray.height = to_fix(MAP_S * V_RES / $sqrt(32'(r_dist >> 32)));
+        end
+    endfunction
+
+    localparam real FOV = PI / 3; // 60deg
+
+    line_t lines [H_RES-1:0];
+    always_ff @(posedge clk_in) begin
+        if (frame && |(mvmt_in)) begin
+            for (integer i = 0; i < H_RES; i++) begin
+                fix_t angle = (player_angle - to_fix(FOV / 2.0)) +
+                                  to_fix(($itor(i) / $itor(H_RES)) * FOV);
+                // normalize angle
+                if (angle >= to_fix(2*PI)) angle-=to_fix(2*PI);
+                if (angle < to_fix(0)) angle+=to_fix(2*PI);
+                lines[i] = cast_ray(angle);
+            end
+        end
+    end
 
     /* --------------------------- Rendering --------------------------- */
 
-    localparam Q_SIZE = 20;
-        logic square, square_2;
-        always_comb begin
-            /* verilator lint_off WIDTH */
-            square = (sx >= (px >> 16)) && (sx < (px >> 16) + Q_SIZE) && (sy >= (py >> 16)) && (sy < (py >> 16) + Q_SIZE);
-            square_2 = (sx >= ((px+pdx) >> 16)) && (sx < ((px+pdx) >> 16) + Q_SIZE) && (sy >= ((py+pdy) >> 16)) && (sy < ((py+pdy) >> 16) + Q_SIZE);
-
+    
+    logic [3:0] paint_r, paint_g, paint_b;
+    always_comb begin
+        logic signed [31:0] bruh =  32'(sy) - 32'(V_RES/2);
+        line_t line = lines[sx];
+        logic draw = -(line.height >> 17) < bruh && bruh < (line.height >> 17);
+        if (draw) begin
+            paint_r = line.is_vert ? 4'hf : 4'hc;
+            paint_g = 4'h0;
+            paint_b = line.is_vert ? 4'hf : 4'h0;
+        end else begin
+            paint_r = 4'h1;
+            paint_g = 4'h3;
+            paint_b = 4'h7;
         end
+    end
+    
+    // localparam P_SIZE = 5;
+    // always_comb begin
+    //     logic player_draw = 
+    //         (32'(sx) >= (player.x >> 16) - P_SIZE) &&
+    //         (32'(sx) <  (player.x >> 16) + P_SIZE) &&
+    //         (32'(sy) >= (player.y >> 16) - P_SIZE) &&
+    //         (32'(sy) <  (player.y >> 16) + P_SIZE);
 
-        // paint colour: white inside square, blue outside
-        logic [3:0] paint_r, paint_g, paint_b;
-        always_comb begin
-            paint_r = (square) ? 4'hF : (square_2) ? 4'hc : 4'h1;
-            paint_g = (square) ? 4'hF : (square_2) ? 4'hc : 4'h3;
-            paint_b = (square) ? 4'hF : (square_2) ? 4'hc : 4'h7;
-        end
+    //     logic player_dir = 
+    //         (32'(sx) >= ((player.x + 4 * player_delta.x) >> 16) - P_SIZE) &&
+    //         (32'(sx) <  ((player.x + 4 * player_delta.x) >> 16) + P_SIZE) &&
+    //         (32'(sy) >= ((player.y + 4 * player_delta.y) >> 16) - P_SIZE) &&
+    //         (32'(sy) <  ((player.y + 4 * player_delta.y) >> 16) + P_SIZE);
 
-        // display colour: paint colour but black in blanking interval
-        logic [3:0] display_r, display_g, display_b;
-        always_comb begin
-            display_r = (de) ? paint_r : 4'h0;
-            display_g = (de) ? paint_g : 4'h0;
-            display_b = (de) ? paint_b : 4'h0;
-        end
+    //     logic map_draw = (map[sy / MAP_S][sx / MAP_S] && sx % 2 == 0 && sy % 2 == 0);
+
+    //     logic gridline_draw = sy % MAP_S == 0 || sx % MAP_S == 0;
+
+    //     if (!de) begin
+    //         // black in blanking interval
+    //         paint_r = 4'h0;
+    //         paint_g = 4'h0;
+    //         paint_b = 4'h0;
+    //     end else if (player_draw) begin
+    //         paint_r = 4'hf;
+    //         paint_g = 4'h0;
+    //         paint_b = 4'h0;
+    //     end else if (player_dir) begin
+    //         paint_r = 4'h0;
+    //         paint_g = 4'hf;
+    //         paint_b = 4'h0;
+    //     end else if (gridline_draw) begin
+    //         paint_r = 4'h0;
+    //         paint_g = 4'h0;
+    //         paint_b = 4'h0;
+    //     end else if (map_draw) begin
+    //         paint_r = 4'hf;
+    //         paint_g = 4'hf;
+    //         paint_b = 4'hf;
+    //     end 
+    //     // else begin
+    //     //     paint_r = 4'h1;
+    //     //     paint_g = 4'h3;
+    //     //     paint_b = 4'h7;
+    //     // end
+    // end
 
     always_ff @(posedge clk_in) begin
         sx_out <= sx;
         sy_out <= sy;
         de_out <= de;
-        /* verilator lint_off WIDTH */
-        r_out <= {2{display_r}};
-        g_out <= {2{display_g}};
-        b_out <= {2{display_b}};
+        r_out <= de ? {2{paint_r}} : 8'h0;
+        g_out <= de ? {2{paint_g}} : 8'h0;
+        b_out <= de ? {2{paint_b}} : 8'h0;
     end
 endmodule
