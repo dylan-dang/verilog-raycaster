@@ -1,10 +1,28 @@
 `default_nettype none
 `timescale 1ns / 1ps
 
-`define fmask 32'h0000ffff // fractional part
-`define imask 32'hffff0000 // integer part
-`define LEVEL "levels/open.mem"
+`define LEVEL "levels/8x8/hallway.mem"
+`define MAP_X 8
+`define MAP_Y 8
+`define MAP_SCALE 32
+
+`define TEX_X 256
+`define TEX_Y 256
+
+`define SPEED 2.0
+`define TURN_SPEED 0.05
+`define INIT_ANGLE 0.0
+
+`define FOV (PI / 3)
+
+`define TRIG_SAMPLES 256
+
 `define MAP_OVERLAY
+`define OVERLAY_SCALE_X 0.5
+`define OVERLAY_SCALE_Y 0.5
+`define OVERLAY_OFFSET_X 10
+`define OVERLAY_OFFSET_Y 10
+`define OVERLAY_PLAYER_SIZE 5.0
 
 // Q16.16 fixed point number
 typedef logic signed [31:0] fix_t;
@@ -87,9 +105,6 @@ module raycaster (
     /* --------------------------- screen --------------------------- */
 
     logic [9:0] sx, sy;
-    fix_t sx_f, sy_f;
-    assign sx_f = { {(16-$bits(sx)){1'h0}}, sx, 16'h0};
-    assign sy_f = { {(16-$bits(sy)){1'h0}}, sy, 16'h0};
 
     logic de;
     screen display_inst (
@@ -112,40 +127,41 @@ module raycaster (
     // feature idea: lerp between entries
 
     localparam real PI = 3.14159265358979323846;
-    localparam SAMPLES = 256;
-    fix_t sin_table[SAMPLES];
-    fix_t sec_table[SAMPLES];
+    localparam TRIG_SAMPLES = `TRIG_SAMPLES;
+    fix_t sin_table[TRIG_SAMPLES];
+    fix_t sec_table[TRIG_SAMPLES];
     generate
-        for(genvar i = 0; i < SAMPLES; i++) begin
-            assign sin_table[i] = to_fix($sin(PI/2 * i/SAMPLES));
-            assign sec_table[i] = to_fix(1/$cos(PI/2 * i/SAMPLES));
+        for(genvar i = 0; i < TRIG_SAMPLES; i++) begin
+            assign sin_table[i] = to_fix($sin(PI/2 * i/TRIG_SAMPLES));
+            assign sec_table[i] = to_fix(1/$cos(PI/2 * i/TRIG_SAMPLES));
         end
     endgenerate
 
     function fix_t sin(input fix_t x);
         fix_t quad = mult(x, to_fix(2 / PI));
-        fix_t entry = mult(quad & `fmask, to_fix(SAMPLES));
-        logic [$clog2(SAMPLES)-1:0] index = entry[15+$clog2(SAMPLES):16];
+        fix_t entry = mult(quad & 32'h0000ffff, to_fix(TRIG_SAMPLES));
+        logic[$clog2(TRIG_SAMPLES)-1:0] index = 
+            entry[15+$clog2(TRIG_SAMPLES):16];
         begin
             case (quad[17:16] /*int part mod 4*/)
                 2'd0: sin = sin_table[index];
-                2'd1: sin = sin_table[SAMPLES-1 - index];
+                2'd1: sin = sin_table[TRIG_SAMPLES-1 - index];
                 2'd2: sin = -sin_table[index];
-                2'd3: sin = -sin_table[SAMPLES-1 - index];
+                2'd3: sin = -sin_table[TRIG_SAMPLES-1 - index];
             endcase
         end
     endfunction
     
     function fix_t sec(input fix_t x);
         fix_t quad = mult(x, to_fix(2 / PI));
-        fix_t entry = mult(quad & `fmask, to_fix(SAMPLES));
-        logic [$clog2(SAMPLES)-1:0] index = entry[15+$clog2(SAMPLES):16];
+        fix_t entry = mult(quad & 32'h0000ffff, to_fix(TRIG_SAMPLES));
+        logic [$clog2(TRIG_SAMPLES)-1:0] index = entry[15+$clog2(TRIG_SAMPLES):16];
         begin
             case (quad[17:16] /*int part mod 4*/)
                 2'd0: sec = sec_table[index];
-                2'd1: sec = -sec_table[SAMPLES - index];
+                2'd1: sec = -sec_table[TRIG_SAMPLES - index];
                 2'd2: sec = -sec_table[index];
-                2'd3: sec = sec_table[SAMPLES - index];
+                2'd3: sec = sec_table[TRIG_SAMPLES - index];
             endcase
         end
     endfunction
@@ -176,9 +192,10 @@ module raycaster (
 
     /* --------------------------- Map --------------------------- */
 
-    localparam MAP_X = 8;
-    localparam MAP_Y = 8;
-    localparam MAP_S = 64;
+    localparam MAP_X = `MAP_X;
+    localparam MAP_Y = `MAP_Y;
+    localparam MAP_SCALE = `MAP_SCALE;
+
     cell_t map [MAP_Y-1:0][MAP_X-1:0];
     initial begin
         $readmemh(`LEVEL, map);
@@ -186,22 +203,22 @@ module raycaster (
     
     function cell_t cell_at(input vec_t pos);
         begin
-            cell_at = map[($clog2(MAP_Y))'(pos.y >> (16 + $clog2(MAP_S)))]
-                         [($clog2(MAP_X))'(pos.x >> (16 + $clog2(MAP_S)))];
+            cell_at = map[($clog2(MAP_Y))'(pos.y >> (16 + $clog2(MAP_SCALE)))]
+                         [($clog2(MAP_X))'(pos.x >> (16 + $clog2(MAP_SCALE)))];
         end
     endfunction
 
     function logic in_bounds(input vec_t pos);
         begin
-            in_bounds = pos.x >= to_fix(0) && pos.x < to_fix(MAP_X*MAP_S) &&
-                        pos.y >= to_fix(0) && pos.y < to_fix(MAP_Y*MAP_S);
+            in_bounds = pos.x >= to_fix(0) && pos.x < to_fix(MAP_X*MAP_SCALE) &&
+                        pos.y >= to_fix(0) && pos.y < to_fix(MAP_Y*MAP_SCALE);
         end
     endfunction
 
     /* --------------------------- Texture --------------------------- */
 
-    localparam TEX_X = 256;
-    localparam TEX_Y = 256;
+    localparam TEX_X = `TEX_X;
+    localparam TEX_Y = `TEX_Y;
 
     typedef color_t texture_t [(TEX_X*TEX_Y)-1:0];
 
@@ -237,7 +254,8 @@ module raycaster (
             $fread(color_planes, fd);
             color_planes = {<<8{color_planes}};
             if (color_planes != 1) begin
-                $display("image must have 1 color plane, found %d.", color_planes);
+                $display("image must have 1 color plane, found %d.", 
+                         color_planes);
             end
 
             $fread(bpp, fd);
@@ -262,12 +280,15 @@ module raycaster (
 
     /* --------------------------- Movement --------------------------- */
 
-    localparam real SPEED = 2;
-    localparam real TURN_SPEED = 0.05;
-    localparam real INIT_ANGLE = 0;
+    localparam real SPEED = `SPEED;
+    localparam real TURN_SPEED = `TURN_SPEED;
+    localparam real INIT_ANGLE = `INIT_ANGLE;
 
     fix_t player_angle = to_fix(INIT_ANGLE);
-    vec_t player = { to_fix(MAP_S * MAP_X / 2), to_fix(MAP_S * MAP_Y / 2) };
+    vec_t player = {
+        to_fix(MAP_SCALE * MAP_X / 2),
+        to_fix(MAP_SCALE * MAP_Y / 2)
+    };
     vec_t player_delta = {
         to_fix(SPEED*$cos(INIT_ANGLE)), 
         to_fix(SPEED*$sin(INIT_ANGLE))
@@ -280,7 +301,8 @@ module raycaster (
             if (key_left || key_right) begin
                 if (key_right) begin
                     player_angle += to_fix(TURN_SPEED);
-                    if (player_angle >= to_fix(2*PI)) player_angle-=to_fix(2*PI);
+                    if (player_angle >= to_fix(2*PI)) 
+                        player_angle-=to_fix(2*PI);
                 end
                 if (key_left) begin
                     player_angle -= to_fix(TURN_SPEED);
@@ -367,13 +389,17 @@ module raycaster (
         end
     endfunction
 
+    localparam logic[63:0] i64_MAX = 64'hefff_ffff_ffff_ffff;
+    localparam logic[31:0] i32_MAX = 32'hefff_ffff;
+
     function ray_t cast_ray(fix_t angle);
         vec_t h_ray, v_ray;
         vec_t h_ray_delta, v_ray_delta;
 
-        fix_t sq_d_scl, inv_dist_scl;
-        logic[63:0] h_sqdist = 64'hefff_ffff_ffff_ffff;
-        logic[63:0] v_sqdist = 64'hefff_ffff_ffff_ffff;
+        fix_t sqdist_scl, inv_dist_scl;
+        logic[63:0] h_sqdist = i64_MAX;
+        logic[63:0] v_sqdist = i64_MAX;
+        logic[63:0] sqdist;
             
         fix_t ncot_ra = -cot(angle);
         logic facing_up = angle > to_fix(PI);
@@ -384,11 +410,11 @@ module raycaster (
         begin
             // -------- check horizontal walls --------
             // start at nearest map scaled wall intersection
-            h_ray.y = (player.y & ( ~(32'(MAP_S-1)) << 16 )) +
-                (facing_up ? to_fix(-0.001) : to_fix(MAP_S));
+            h_ray.y = (player.y & ( ~(32'(MAP_SCALE-1)) << 16 )) +
+                (facing_up ? to_fix(-0.001) : to_fix(MAP_SCALE));
             h_ray.x = mult(player.y - h_ray.y, ncot_ra) + player.x;
 
-            h_ray_delta.y = facing_up ? to_fix(-MAP_S) : to_fix(MAP_S);
+            h_ray_delta.y = facing_up ? to_fix(-MAP_SCALE) : to_fix(MAP_SCALE);
             h_ray_delta.x = mult(-h_ray_delta.y, ncot_ra);
 
             if (!near(angle, to_fix(0)) && !near(angle, to_fix(PI))) begin
@@ -403,14 +429,19 @@ module raycaster (
             end
 
             // -------- check vertical walls --------
-            v_ray.x = (player.x & ( ~(32'(MAP_S-1)) << 16 )) +
-                (facing_left ? to_fix(-0.001) : to_fix(MAP_S));
+            v_ray.x = (player.x & ( ~(32'(MAP_SCALE-1)) << 16 )) +
+                (facing_left ? to_fix(-0.001) : to_fix(MAP_SCALE));
             v_ray.y = mult(player.x - v_ray.x, ntan_ra) + player.y;
 
-            v_ray_delta.x = facing_left ? to_fix(-MAP_S) : to_fix(MAP_S);
+            v_ray_delta.x = facing_left ?
+                to_fix(-MAP_SCALE) :
+                to_fix(MAP_SCALE);
             v_ray_delta.y = mult(-v_ray_delta.x, ntan_ra);
 
-            if (!near(angle, to_fix(PI/2)) && !near(angle, to_fix(3*PI/2))) begin
+            if (
+                !near(angle, to_fix(PI/2)) &&
+                !near(angle, to_fix(3*PI/2))
+            ) begin
                 for (integer v_check = 0; v_check < MAP_X; v_check++) begin
                     if (|cell_at(v_ray)) begin
                         v_sqdist = sq_dist(player, v_ray);
@@ -423,22 +454,28 @@ module raycaster (
             
             // -------- set ray info --------
             cast_ray.is_vert = v_sqdist < h_sqdist;
-            // d^2 / 2^16
-            sq_d_scl = 32'((cast_ray.is_vert ? v_sqdist : h_sqdist) >> 32);
-            // 1/sqrt(d^2 / 2^16) = 2^8 / d
-            inv_dist_scl = inv_sqrt(sq_d_scl);
+            sqdist = cast_ray.is_vert ? v_sqdist : h_sqdist;
+            if (sqdist == i64_MAX) begin
+                cast_ray.distance = i32_MAX;
+                cast_ray.inv_dist = 0;
+                cast_ray.pos = player;
+                cast_ray.cell_type = CELL_AIR;
+            end else begin
+                sqdist_scl = 32'(sqdist >> 32); // d^2 / 2^16
+                inv_dist_scl = inv_sqrt(sqdist_scl); // 1/sqrt(d^2/2^16) = 2^8/d
 
-            cast_ray.inv_dist = inv_dist_scl >> 8;
-            cast_ray.distance = mult(inv_dist_scl, sq_d_scl) << 8;
-            cast_ray.pos = cast_ray.is_vert ? v_ray : h_ray;
-            cast_ray.cell_type = cell_at(cast_ray.pos);
+                cast_ray.inv_dist = inv_dist_scl >> 8;
+                cast_ray.distance = mult(inv_dist_scl, sqdist_scl) << 8;
+                cast_ray.pos = cast_ray.is_vert ? v_ray : h_ray;
+                cast_ray.cell_type = cell_at(cast_ray.pos);
+            end
         end
     endfunction
 
 
     /* --------------------------- Rendering --------------------------- */
     
-    localparam real FOV = PI / 3; // 60deg
+    localparam real FOV = `FOV;
 
     // ray_t rays [H_RES-1:0];
     line_t lines[H_RES-1:0];
@@ -454,11 +491,14 @@ module raycaster (
                 if (angle < to_fix(0)) angle+=to_fix(2*PI);
                 ray = cast_ray(angle);
                 // scale by secant of camera angle to fix fisheye
-                lines[i].height = mult(mult(mult(ray.inv_dist, to_fix(MAP_S)),
-                                to_fix(H_RES)), sec(player_angle - angle));
+                lines[i].height =
+                    mult(mult(mult(ray.inv_dist, to_fix(MAP_SCALE)),
+                    to_fix(H_RES)), sec(player_angle - angle));
                 // inverse operations of lines[i].height
-                lines[i].inv_height = mult(mult(mult(ray.distance, to_fix(1.0/MAP_S)),
-                                to_fix(1.0/H_RES)), cos(player_angle - angle));
+                lines[i].inv_height = 
+                    mult(mult(mult(ray.distance, to_fix(1.0/MAP_SCALE)),
+                    to_fix(1.0/H_RES)), cos(player_angle - angle));
+
                 lines[i].is_vert = ray.is_vert;
                 lines[i].ray_pos = ray.pos;
                 lines[i].ray_angle = angle;
@@ -472,6 +512,7 @@ module raycaster (
     always_comb begin
         uint8_t ty, tx;
         line_t line = lines[sx];
+        fix_t sy_f = 32'(sy) << 16;
         logic drawing_wall = near(sy_f, to_fix(V_RES/2), line.height >> 1);
 
         if (drawing_wall) begin
@@ -479,12 +520,14 @@ module raycaster (
                     + to_fix(0.5)) >> (16 - $clog2(TEX_Y)));
             ty = -ty; // flip for bmp reading
             if (line.is_vert) begin
-                tx = 8'(line.ray_pos.y >> (16 - $clog2(TEX_X) + $clog2(MAP_S)));
+                tx = 8'(line.ray_pos.y >> 
+                    (16 - $clog2(TEX_X) + $clog2(MAP_SCALE)));
                 // flip texture if 90deg < angle < 270deg
                 if (line.ray_angle > to_fix(PI/2) &&
                     line.ray_angle < to_fix(3*PI/2)) tx = -tx;
             end else begin
-                tx = 8'(line.ray_pos.x >> (16 - $clog2(TEX_X) + $clog2(MAP_S)));
+                tx = 8'(line.ray_pos.x >>
+                    (16 - $clog2(TEX_X) + $clog2(MAP_SCALE)));
                 // flip texture if angle < 180deg
                 if (line.ray_angle < to_fix(PI)) tx = -tx;
             end
@@ -502,32 +545,54 @@ module raycaster (
     end
     
 `ifdef MAP_OVERLAY
-    localparam P_SIZE = 5;
+    localparam real OVERLAY_SCALE_X = `OVERLAY_SCALE_X;
+    localparam real OVERLAY_SCALE_Y = `OVERLAY_SCALE_Y;
+    localparam real OVERLAY_OFFSET_X = `OVERLAY_OFFSET_X;
+    localparam real OVERLAY_OFFSET_Y = `OVERLAY_OFFSET_Y;
+    localparam real OVERLAY_PLAYER_SIZE = `OVERLAY_PLAYER_SIZE;
+
     always_comb begin
-        logic player_draw = near(sx_f, player.x, to_fix(P_SIZE)) &&
-                            near(sy_f, player.y, to_fix(P_SIZE));
-
-        logic player_dir_draw =
-            near(sx_f, player.x + 4*player_delta.x, to_fix(P_SIZE)) &&
-            near(sy_f, player.y + 4*player_delta.y, to_fix(P_SIZE));
-
-        logic in_map = sx/MAP_S < MAP_X && sy/MAP_S < MAP_Y;
-        cell_t overlay_cell = map[sy / MAP_S][sx / MAP_S];
-
+        vec_t s_pos, s_cell_pos;
+        logic in_map_bounds;
+        cell_t cell_overlay;
         uint8_t ty, tx;
 
-        logic gridline_draw = (in_map) && (sy % MAP_S == 0 || sx % MAP_S == 0);
+        s_pos.x = mult(32'(sx) << 16, to_fix(1/OVERLAY_SCALE_X)) -
+                       to_fix(OVERLAY_OFFSET_X);
+        s_pos.y = mult(32'(sy) << 16, to_fix(1/OVERLAY_SCALE_Y)) -
+                       to_fix(OVERLAY_OFFSET_Y);
 
-        if (player_draw) begin
+        s_cell_pos.x = s_pos.x % (MAP_SCALE << 16);
+        s_cell_pos.y = s_pos.y % (MAP_SCALE << 16);
+
+        in_map_bounds = in_bounds(s_pos);
+        cell_overlay = cell_at(s_pos);
+
+        if (
+            near(s_pos.x, player.x, to_fix(OVERLAY_PLAYER_SIZE)) &&
+            near(s_pos.y, player.y, to_fix(OVERLAY_PLAYER_SIZE))
+        ) begin
+            // drawing player position
             color = { 8'h0, 8'h0, 8'hff };
-        end else if (player_dir_draw) begin
+        end else if (
+            near(s_pos.x, player.x + player_delta.x, 
+                 to_fix(OVERLAY_PLAYER_SIZE)) &&
+            near(s_pos.y, player.y + player_delta.y,
+                 to_fix(OVERLAY_PLAYER_SIZE))
+        ) begin
+            // drawing player direction
             color = { 8'h0, 8'hff, 8'hff };
-        end else if (gridline_draw) begin
+        end else if (
+            in_map_bounds &&
+            (near(s_cell_pos.x, 0) || near(s_cell_pos.y, 0))
+        ) begin
+            // drawing gridline
             color = { 8'h0, 8'h0, 8'h0 };
-        end else if (in_map && |overlay_cell) begin
-            ty = -(8'(sy) % MAP_S << ($clog2(TEX_Y) - $clog2(MAP_S)));
-            tx = 8'(sx) % MAP_S << ($clog2(TEX_Y) - $clog2(MAP_S));
-            color = textures[overlay_cell-1][ty * TEX_Y + tx];
+        end else if (in_map_bounds && |cell_overlay) begin
+            // drawing map cell
+            tx = 8'(mult(s_cell_pos.x, to_fix(TEX_X/MAP_SCALE)) >> 16);
+            ty = -(8'(mult(s_cell_pos.y, to_fix(TEX_Y/MAP_SCALE)) >> 16));
+            color = textures[cell_overlay-1][ty * TEX_Y + tx];
         end
     end
 `endif
