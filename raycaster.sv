@@ -97,8 +97,8 @@ endfunction
 
 module raycaster (
     input  wire logic clk_in,        // pixel clock
-    input  wire logic rst_in,        // sim reset
-    input  wire logic[3:0] mvmt_in,  // player movement
+    input  wire logic rst_in,        // reset pin
+    input  wire logic[3:0] mvmt_in,  // player movement keys
     output      logic [9:0] sx_out,  // horizontal screen position
     output      logic [9:0] sy_out,  // vertical screen position
     output      logic de_out,        // data enable (low in blanking interval)
@@ -109,7 +109,7 @@ module raycaster (
 
     /* --------------------------- screen --------------------------- */
 
-    logic [9:0] sx, sy;
+    logic [9:0] sx, sy; // screen position
 
     logic de;
     screen display_inst (
@@ -378,7 +378,7 @@ module raycaster (
             else if (x[2])  guess = 32'sh000d105e;
             else if (x[1])  guess = 32'sh001279a7;
             else            guess = 32'sh00200000;
-            // Newton's method - x(n+1) =(x(n) * (1.5 - (val/2 * x(n)^2))
+            // Newton's method
             guess = mult(guess, threehalfs - mult(x >>> 1, mult(guess, guess)));
             guess = mult(guess, threehalfs - mult(x >>> 1, mult(guess, guess)));
             guess = mult(guess, threehalfs - mult(x >>> 1, mult(guess, guess)));
@@ -418,7 +418,7 @@ module raycaster (
 
         fix_t ntan_ra = -tan(angle);
         logic facing_left = angle > to_fix(PI/2) && angle < to_fix(3*PI/2);
-        fix_t h_fuzz, v_fuzz;
+        fix_t h_fuzz = to_fix(0.2), v_fuzz = to_fix(0.2);
         logic clip_h, clip_v;
         
         begin
@@ -427,7 +427,8 @@ module raycaster (
             // round down to nearest scale unit
             h_ray.y = mult(mult(player.y, to_fix(1.0/MAP_SCALE_Y)) &
                       32'hffff0000, to_fix(MAP_SCALE_Y));
-            h_ray.y += facing_up ? 0 : to_fix(MAP_SCALE_Y);
+            // start at first possible wall intersection
+            if (!facing_up) h_ray.y += to_fix(MAP_SCALE_Y);
             h_ray.x = mult(player.y - h_ray.y, ncot_ra) + player.x;
 
             h_ray_delta.y = facing_up ? to_fix(-MAP_SCALE_Y) : to_fix(MAP_SCALE_Y);
@@ -449,9 +450,11 @@ module raycaster (
             end
 
             // -------- check vertical walls --------
+
             // round down to nearest scale unit
             v_ray.x = mult(mult(player.x, to_fix(1.0/MAP_SCALE_X)) &
                       32'hffff0000, to_fix(MAP_SCALE_X));
+            // start at first possible wall intersection
             v_ray.x += facing_left ? 0 : to_fix(MAP_SCALE_X);
             v_ray.y = mult(player.x - v_ray.x, ntan_ra) + player.y;
 
