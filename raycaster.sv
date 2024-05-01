@@ -578,7 +578,7 @@ module raycaster (
             end
         end else if (sy_f < to_fix(V_RES/2)) begin
             // ceiling
-            color = { 8'h77, 8'h33, 8'h11 };
+            color = { 8'hf8, 8'h7c, 8'h32 };
         end else begin
             // floor
             color = { 8'h88, 8'h88, 8'h88 };
