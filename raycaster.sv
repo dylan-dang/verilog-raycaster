@@ -7,6 +7,7 @@
 
 // Q16.16 fixed point number
 typedef logic signed [31:0] fix_t;
+typedef logic[7:0] uint8_t;
 
 typedef struct packed {
     fix_t x;
@@ -17,6 +18,13 @@ typedef struct packed {
     logic is_vert;
     fix_t height;
 } line_t;
+
+
+typedef struct packed {
+    uint8_t r;
+    uint8_t g;
+    uint8_t b;
+} pixel_t;
 
 function fix_t to_fix(input real real_num);
     begin
@@ -157,6 +165,17 @@ module raycaster (  // coordinate width
             is_clipping = map[my][mx];
         end
     endfunction
+
+    /* --------------------------- Texture --------------------------- */
+
+    pixel_t texture[255:0][255:0];
+
+    initial begin
+        integer fd;
+        fd = $fopen("textures/osaka.bin", "rb");
+        $fread(texture, fd);
+        $fclose(fd);
+    end 
 
     /* --------------------------- Movement --------------------------- */
 
