@@ -1,27 +1,30 @@
 `default_nettype none
 `timescale 1ns / 1ps
 
-`define LEVEL "levels/8x8/hallway.mem"
-`define MAP_X 8
-`define MAP_Y 8
+`define LEVEL     "levels/8x8/hallway.mem"
+`define MAP_X     8
+`define MAP_Y     8
 `define MAP_SCALE 32
+`define MAP_WRAP
 
 `define TEX_X 256
 `define TEX_Y 256
 
-`define SPEED 2.0
-`define TURN_SPEED 0.05
-`define INIT_ANGLE 0.0
+`define PLAYER_SPEED      2.0
+`define PLAYER_TURN_SPEED 0.05
+`define PLAYER_INIT_X     (MAP_SCALE * MAP_X / 2)
+`define PLAYER_INIT_Y     (MAP_SCALE * MAP_Y / 2)
+`define PLAYER_INIT_ANGLE 0.0
 
 `define FOV (PI / 3)
 
 `define TRIG_SAMPLES 256
 
 `define MAP_OVERLAY
-`define OVERLAY_SCALE_X 0.5
-`define OVERLAY_SCALE_Y 0.5
-`define OVERLAY_OFFSET_X 10
-`define OVERLAY_OFFSET_Y 10
+`define OVERLAY_SCALE_X     0.5
+`define OVERLAY_SCALE_Y     0.5
+`define OVERLAY_OFFSET_X    10
+`define OVERLAY_OFFSET_Y    10
 `define OVERLAY_PLAYER_SIZE 5.0
 
 // Q16.16 fixed point number
@@ -280,18 +283,20 @@ module raycaster (
 
     /* --------------------------- Movement --------------------------- */
 
-    localparam real SPEED = `SPEED;
-    localparam real TURN_SPEED = `TURN_SPEED;
-    localparam real INIT_ANGLE = `INIT_ANGLE;
+    localparam real PLAYER_SPEED = `PLAYER_SPEED;
+    localparam real PLAYER_TURN_SPEED = `PLAYER_TURN_SPEED;
+    localparam real PLAYER_INIT_ANGLE = `PLAYER_INIT_ANGLE;
+    localparam real PLAYER_INIT_X = `PLAYER_INIT_X;
+    localparam real PLAYER_INIT_Y = `PLAYER_INIT_Y;
 
-    fix_t player_angle = to_fix(INIT_ANGLE);
+    fix_t player_angle = to_fix(PLAYER_INIT_ANGLE);
     vec_t player = {
-        to_fix(MAP_SCALE * MAP_X / 2),
-        to_fix(MAP_SCALE * MAP_Y / 2)
+        to_fix(PLAYER_INIT_X),
+        to_fix(PLAYER_INIT_Y)
     };
     vec_t player_delta = {
-        to_fix(SPEED*$cos(INIT_ANGLE)), 
-        to_fix(SPEED*$sin(INIT_ANGLE))
+        to_fix(PLAYER_SPEED*$cos(PLAYER_INIT_ANGLE)), 
+        to_fix(PLAYER_SPEED*$sin(PLAYER_INIT_ANGLE))
     };
     wire key_up, key_down, key_left, key_right;
     assign { key_up, key_down, key_left, key_right } = mvmt_in;
@@ -300,16 +305,16 @@ module raycaster (
         if (frame) begin
             if (key_left || key_right) begin
                 if (key_right) begin
-                    player_angle += to_fix(TURN_SPEED);
+                    player_angle += to_fix(PLAYER_TURN_SPEED);
                     if (player_angle >= to_fix(2*PI)) 
                         player_angle-=to_fix(2*PI);
                 end
                 if (key_left) begin
-                    player_angle -= to_fix(TURN_SPEED);
+                    player_angle -= to_fix(PLAYER_TURN_SPEED);
                     if (player_angle < to_fix(0)) player_angle+=to_fix(2*PI);
                 end
-                player_delta.x <= mult(to_fix(SPEED), cos(player_angle));
-                player_delta.y <= mult(to_fix(SPEED), sin(player_angle));
+                player_delta.x <= mult(to_fix(PLAYER_SPEED), cos(player_angle));
+                player_delta.y <= mult(to_fix(PLAYER_SPEED), sin(player_angle));
             end 
 
             if (key_up || key_down) begin
