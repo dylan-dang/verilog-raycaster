@@ -1,10 +1,12 @@
 `default_nettype none
 `timescale 1ns / 1ps
 
-`define LEVEL     "levels/8x8/hallway.mem"
+`define LEVEL     "levels/8x8/open.mem"
 `define MAP_X     8
 `define MAP_Y     8
-`define MAP_SCALE 32
+`define MAP_SCALE_X 64
+`define MAP_SCALE_Y 64
+`define MAP_SCALE_Z 64
 `define MAP_WRAP
 
 `define TEX_X 256
@@ -12,8 +14,8 @@
 
 `define PLAYER_SPEED      2.0
 `define PLAYER_TURN_SPEED 0.05
-`define PLAYER_INIT_X     (MAP_SCALE * MAP_X / 2)
-`define PLAYER_INIT_Y     (MAP_SCALE * MAP_Y / 2)
+`define PLAYER_INIT_X     (MAP_SCALE_X * MAP_X / 2)
+`define PLAYER_INIT_Y     (MAP_SCALE_Y * MAP_Y / 2)
 `define PLAYER_INIT_ANGLE 0.0
 
 `define FOV (PI / 3)
@@ -23,8 +25,8 @@
 `define MAP_OVERLAY
 `define OVERLAY_SCALE_X     0.5
 `define OVERLAY_SCALE_Y     0.5
-`define OVERLAY_OFFSET_X    10
-`define OVERLAY_OFFSET_Y    10
+`define OVERLAY_OFFSET_X    0.0
+`define OVERLAY_OFFSET_Y    0.0
 `define OVERLAY_PLAYER_SIZE 5.0
 
 // Q16.16 fixed point number
@@ -197,24 +199,29 @@ module raycaster (
 
     localparam MAP_X = `MAP_X;
     localparam MAP_Y = `MAP_Y;
-    localparam MAP_SCALE = `MAP_SCALE;
+    localparam real MAP_SCALE_X = `MAP_SCALE_X;
+    localparam real MAP_SCALE_Y = `MAP_SCALE_Y;
+    localparam real MAP_SCALE_Z = `MAP_SCALE_Z;
 
     cell_t map [MAP_Y-1:0][MAP_X-1:0];
     initial begin
         $readmemh(`LEVEL, map);
     end
-    
-    function cell_t cell_at(input vec_t pos);
-        begin
-            cell_at = map[($clog2(MAP_Y))'(pos.y >> (16 + $clog2(MAP_SCALE)))]
-                         [($clog2(MAP_X))'(pos.x >> (16 + $clog2(MAP_SCALE)))];
-        end
-    endfunction
 
     function logic in_bounds(input vec_t pos);
         begin
-            in_bounds = pos.x >= to_fix(0) && pos.x < to_fix(MAP_X*MAP_SCALE) &&
-                        pos.y >= to_fix(0) && pos.y < to_fix(MAP_Y*MAP_SCALE);
+            in_bounds = pos.x >= to_fix(0) && pos.x < to_fix(MAP_X*MAP_SCALE_X) &&
+                        pos.y >= to_fix(0) && pos.y < to_fix(MAP_Y*MAP_SCALE_Y);
+        end
+    endfunction
+    
+    function cell_t cell_at(input vec_t pos);
+        begin
+            cell_at = map[(mult(pos.y, to_fix(1.0/MAP_SCALE_Y)) >> 16) % MAP_Y]
+                         [(mult(pos.x, to_fix(1.0/MAP_SCALE_X)) >> 16) % MAP_X];
+`ifndef MAP_WRAP
+            if (!in_bounds(pos)) cell_at = CELL_AIR;
+`endif
         end
     endfunction
 
@@ -411,20 +418,28 @@ module raycaster (
 
         fix_t ntan_ra = -tan(angle);
         logic facing_left = angle > to_fix(PI/2) && angle < to_fix(3*PI/2);
-
+        fix_t h_fuzz, v_fuzz;
+        logic clip_h, clip_v;
+        
         begin
             // -------- check horizontal walls --------
-            // start at nearest map scaled wall intersection
-            h_ray.y = (player.y & ( ~(32'(MAP_SCALE-1)) << 16 )) +
-                (facing_up ? to_fix(-0.001) : to_fix(MAP_SCALE));
+            
+            // round down to nearest scale unit
+            h_ray.y = mult(mult(player.y, to_fix(1.0/MAP_SCALE_Y)) &
+                      32'hffff0000, to_fix(MAP_SCALE_Y));
+            h_ray.y += facing_up ? 0 : to_fix(MAP_SCALE_Y);
             h_ray.x = mult(player.y - h_ray.y, ncot_ra) + player.x;
 
-            h_ray_delta.y = facing_up ? to_fix(-MAP_SCALE) : to_fix(MAP_SCALE);
+            h_ray_delta.y = facing_up ? to_fix(-MAP_SCALE_Y) : to_fix(MAP_SCALE_Y);
             h_ray_delta.x = mult(-h_ray_delta.y, ncot_ra);
+            h_fuzz = facing_up ? to_fix(-0.2) : to_fix(0.2);
 
             if (!near(angle, to_fix(0)) && !near(angle, to_fix(PI))) begin
                 for (integer h_check = 0; h_check < MAP_Y; h_check++) begin
-                    if (|cell_at(h_ray)) begin
+                    h_ray.y += h_fuzz;
+                    clip_h = |cell_at(h_ray);
+                    h_ray.y += h_fuzz;
+                    if (clip_h) begin
                         h_sqdist = sq_dist(player, h_ray);
                         break;
                     end
@@ -434,21 +449,25 @@ module raycaster (
             end
 
             // -------- check vertical walls --------
-            v_ray.x = (player.x & ( ~(32'(MAP_SCALE-1)) << 16 )) +
-                (facing_left ? to_fix(-0.001) : to_fix(MAP_SCALE));
+            // round down to nearest scale unit
+            v_ray.x = mult(mult(player.x, to_fix(1.0/MAP_SCALE_X)) &
+                      32'hffff0000, to_fix(MAP_SCALE_X));
+            v_ray.x += facing_left ? 0 : to_fix(MAP_SCALE_X);
             v_ray.y = mult(player.x - v_ray.x, ntan_ra) + player.y;
 
-            v_ray_delta.x = facing_left ?
-                to_fix(-MAP_SCALE) :
-                to_fix(MAP_SCALE);
+            v_ray_delta.x = facing_left ? to_fix(-MAP_SCALE_X) : to_fix(MAP_SCALE_X);
             v_ray_delta.y = mult(-v_ray_delta.x, ntan_ra);
+            v_fuzz = facing_left ? to_fix(-0.2) : to_fix(0.2);
 
             if (
                 !near(angle, to_fix(PI/2)) &&
                 !near(angle, to_fix(3*PI/2))
             ) begin
                 for (integer v_check = 0; v_check < MAP_X; v_check++) begin
-                    if (|cell_at(v_ray)) begin
+                    v_ray.x += v_fuzz;
+                    clip_v = |cell_at(v_ray);
+                    v_ray.x -= v_fuzz;
+                    if (clip_v) begin
                         v_sqdist = sq_dist(player, v_ray);
                         break;
                     end 
@@ -497,11 +516,11 @@ module raycaster (
                 ray = cast_ray(angle);
                 // scale by secant of camera angle to fix fisheye
                 lines[i].height =
-                    mult(mult(mult(ray.inv_dist, to_fix(MAP_SCALE)),
+                    mult(mult(mult(ray.inv_dist, to_fix(MAP_SCALE_Z)),
                     to_fix(H_RES)), sec(player_angle - angle));
                 // inverse operations of lines[i].height
                 lines[i].inv_height = 
-                    mult(mult(mult(ray.distance, to_fix(1.0/MAP_SCALE)),
+                    mult(mult(mult(ray.distance, to_fix(1.0/MAP_SCALE_Z)),
                     to_fix(1.0/H_RES)), cos(player_angle - angle));
 
                 lines[i].is_vert = ray.is_vert;
@@ -525,14 +544,14 @@ module raycaster (
                     + to_fix(0.5)) >> (16 - $clog2(TEX_Y)));
             ty = -ty; // flip for bmp reading
             if (line.is_vert) begin
-                tx = 8'(line.ray_pos.y >> 
-                    (16 - $clog2(TEX_X) + $clog2(MAP_SCALE)));
+                tx = 8'(mult(line.ray_pos.y, to_fix(1.0/MAP_SCALE_Y)) >> 
+                    (16 - $clog2(TEX_X)));
                 // flip texture if 90deg < angle < 270deg
                 if (line.ray_angle > to_fix(PI/2) &&
                     line.ray_angle < to_fix(3*PI/2)) tx = -tx;
             end else begin
-                tx = 8'(line.ray_pos.x >>
-                    (16 - $clog2(TEX_X) + $clog2(MAP_SCALE)));
+                tx = 8'(mult(line.ray_pos.x, to_fix(1.0/MAP_SCALE_X)) >>
+                    (16 - $clog2(TEX_X)));
                 // flip texture if angle < 180deg
                 if (line.ray_angle < to_fix(PI)) tx = -tx;
             end
@@ -558,6 +577,7 @@ module raycaster (
 
     always_comb begin
         vec_t s_pos, s_cell_pos;
+        vec_t bruh;
         logic in_map_bounds;
         cell_t cell_overlay;
         uint8_t ty, tx;
@@ -567,8 +587,8 @@ module raycaster (
         s_pos.y = mult(32'(sy) << 16, to_fix(1/OVERLAY_SCALE_Y)) -
                        to_fix(OVERLAY_OFFSET_Y);
 
-        s_cell_pos.x = s_pos.x % (MAP_SCALE << 16);
-        s_cell_pos.y = s_pos.y % (MAP_SCALE << 16);
+        s_cell_pos.x = s_pos.x % to_fix(MAP_SCALE_X);
+        s_cell_pos.y = s_pos.y % to_fix(MAP_SCALE_Y);
 
         in_map_bounds = in_bounds(s_pos);
         cell_overlay = cell_at(s_pos);
@@ -595,8 +615,8 @@ module raycaster (
             color = { 8'h0, 8'h0, 8'h0 };
         end else if (in_map_bounds && |cell_overlay) begin
             // drawing map cell
-            tx = 8'(mult(s_cell_pos.x, to_fix(TEX_X/MAP_SCALE)) >> 16);
-            ty = -(8'(mult(s_cell_pos.y, to_fix(TEX_Y/MAP_SCALE)) >> 16));
+            tx = 8'(mult(s_cell_pos.x, to_fix(TEX_X/MAP_SCALE_X)) >> 16);
+            ty = -(8'(mult(s_cell_pos.y, to_fix(TEX_Y/MAP_SCALE_Y)) >> 16));
             color = textures[cell_overlay-1][ty * TEX_Y + tx];
         end
     end
