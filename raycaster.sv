@@ -3,6 +3,7 @@
 
 `define fmask 32'h0000ffff // fractional part
 `define imask 32'hffff0000 // integer part
+`define LEVEL "levels/open.mem"
 `define MAP_OVERLAY
 
 // Q16.16 fixed point number
@@ -177,17 +178,23 @@ module raycaster (
 
     localparam MAP_X = 8;
     localparam MAP_Y = 8;
-    localparam MAP_S = 32;
+    localparam MAP_S = 64;
     cell_t map [MAP_Y-1:0][MAP_X-1:0];
     initial begin
-        $readmemh("levels/multi.mem", map);
+        $readmemh(`LEVEL, map);
     end
     
     function cell_t cell_at(input vec_t pos);
-        // logic [$clog2(MAP_Y)-1:0] my = pos.y[21 + $clog2(MAP_Y): 16 + $clog2(MAP_S)];
-        // logic [$clog2(MAP_X)-1:0] mx = pos.x[21 + $clog2(MAP_X): 16 + $clog2(MAP_S)];
         begin
-            cell_at = map[($clog2(MAP_Y))'(pos.y >> (16 + $clog2(MAP_S)))][($clog2(MAP_X))'(pos.x >> (16 + $clog2(MAP_S)))];
+            cell_at = map[($clog2(MAP_Y))'(pos.y >> (16 + $clog2(MAP_S)))]
+                         [($clog2(MAP_X))'(pos.x >> (16 + $clog2(MAP_S)))];
+        end
+    endfunction
+
+    function logic in_bounds(input vec_t pos);
+        begin
+            in_bounds = pos.x >= to_fix(0) && pos.x < to_fix(MAP_X*MAP_S) &&
+                        pos.y >= to_fix(0) && pos.y < to_fix(MAP_Y*MAP_S);
         end
     endfunction
 
@@ -296,10 +303,6 @@ module raycaster (
                     player.y -= player_delta.y;
                     if (|cell_at(player)) player.y += player_delta.y;
                 end
-                if (player.x < to_fix(5)) player.x = to_fix(5);
-                if (player.y < to_fix(5)) player.y = to_fix(5);
-                if (player.x > to_fix(H_RES)) player.x = to_fix(H_RES);
-                if (player.y > to_fix(V_RES)) player.y = to_fix(V_RES);
             end
         end
     end
@@ -380,7 +383,8 @@ module raycaster (
 
         begin
             // -------- check horizontal walls --------
-            h_ray.y = (player.y & 32'hffc00000) + 
+            // start at nearest map scaled wall intersection
+            h_ray.y = (player.y & ( ~(32'(MAP_S-1)) << 16 )) +
                 (facing_up ? to_fix(-0.001) : to_fix(MAP_S));
             h_ray.x = mult(player.y - h_ray.y, ncot_ra) + player.x;
 
@@ -399,7 +403,7 @@ module raycaster (
             end
 
             // -------- check vertical walls --------
-            v_ray.x = (player.x & 32'hffc00000) + 
+            v_ray.x = (player.x & ( ~(32'(MAP_S-1)) << 16 )) +
                 (facing_left ? to_fix(-0.001) : to_fix(MAP_S));
             v_ray.y = mult(player.x - v_ray.x, ntan_ra) + player.y;
 
@@ -417,12 +421,13 @@ module raycaster (
                 end
             end
             
-            // -------- get ray height --------
+            // -------- set ray info --------
             cast_ray.is_vert = v_sqdist < h_sqdist;
             // d^2 / 2^16
             sq_d_scl = 32'((cast_ray.is_vert ? v_sqdist : h_sqdist) >> 32);
-            // 1/sqrt(d^2 / 2^16) = 2^8 / d =
+            // 1/sqrt(d^2 / 2^16) = 2^8 / d
             inv_dist_scl = inv_sqrt(sq_d_scl);
+
             cast_ray.inv_dist = inv_dist_scl >> 8;
             cast_ray.distance = mult(inv_dist_scl, sq_d_scl) << 8;
             cast_ray.pos = cast_ray.is_vert ? v_ray : h_ray;
@@ -470,15 +475,16 @@ module raycaster (
         logic drawing_wall = near(sy_f, to_fix(V_RES/2), line.height >> 1);
 
         if (drawing_wall) begin
-            ty = 8'((mult(sy_f - to_fix(V_RES/2), line.inv_height) + to_fix(0.5)) >> 8);
+            ty =8'((mult(sy_f - to_fix(V_RES/2), line.inv_height)
+                    + to_fix(0.5)) >> (16 - $clog2(TEX_Y)));
             ty = -ty; // flip for bmp reading
             if (line.is_vert) begin
-                tx = 8'(line.ray_pos.y >> 14);
+                tx = 8'(line.ray_pos.y >> (16 - $clog2(TEX_X) + $clog2(MAP_S)));
                 // flip texture if 90deg < angle < 270deg
                 if (line.ray_angle > to_fix(PI/2) &&
                     line.ray_angle < to_fix(3*PI/2)) tx = -tx;
             end else begin
-                tx = 8'(line.ray_pos.x >> 14);
+                tx = 8'(line.ray_pos.x >> (16 - $clog2(TEX_X) + $clog2(MAP_S)));
                 // flip texture if angle < 180deg
                 if (line.ray_angle < to_fix(PI)) tx = -tx;
             end
