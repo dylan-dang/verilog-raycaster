@@ -8,6 +8,9 @@
 // Q16.16 fixed point number
 typedef logic signed [31:0] fix_t;
 typedef logic[7:0] uint8_t;
+typedef logic[15:0] uint16_t;
+typedef logic[31:0] uint32_t;
+
 
 typedef struct packed {
     fix_t x;
@@ -29,10 +32,10 @@ typedef struct packed {
 } line_t;
 
 typedef struct packed {
-    uint8_t r;
-    uint8_t g;
     uint8_t b;
-} pixel_t;
+    uint8_t g;
+    uint8_t r;
+} color_t;
 
 function fix_t to_fix(input real real_num);
     begin
@@ -176,11 +179,45 @@ module raycaster (  // coordinate width
 
     /* --------------------------- Texture --------------------------- */
 
-    pixel_t texture[255:0][255:0];
+    color_t texture[(256*256)-1:0];
 
     initial begin
         integer fd;
-        fd = $fopen("textures/osaka.bin", "rb");
+        uint16_t signature, color_planes, bpp;
+        uint32_t data_offset, width, height;
+        fd = $fopen("assets/osaka.bmp", "rb");
+        $fread(signature, fd, 0);
+        if (signature != 16'h424d) begin
+            $display("image is not a bitmap");
+            $finish;
+        end
+        $fseek(fd, 32'ha, 0);
+        $fread(data_offset, fd);
+        data_offset = {<<8{data_offset}}; // reverse endianness
+
+        $fseek(fd, 32'h12, 0);
+        $fread(width, fd);
+        width = {<<8{width}};
+        $fread(height, fd);
+        height = {<<8{height}};
+        if (width != 256 || height != 256) begin
+            $display("image is must be 256x256, found %dx%d.", width, height);
+            $finish;
+        end
+
+        $fread(color_planes, fd);
+        color_planes = {<<8{color_planes}};
+        if (color_planes != 1) begin
+            $display("image must have 1 color plane, found %d.", color_planes);
+        end
+
+        $fread(bpp, fd);
+        bpp = {<<8{bpp}};
+        if (bpp != 24) begin
+            $display("image encoding must be 24-bit/pixel, found %d.", bpp);
+        end
+
+        $fseek(fd, data_offset, 0);
         $fread(texture, fd);
         $fclose(fd);
     end 
@@ -392,7 +429,7 @@ module raycaster (  // coordinate width
     end
 
 
-    uint8_t r, g, b;
+    color_t color;
     always_comb begin
         uint8_t ty, tx;
         line_t line = lines[sx];
@@ -402,13 +439,9 @@ module raycaster (  // coordinate width
         if (on_line) begin
             ty = 8'((mult(sy_f - to_fix(V_RES/2), line.inv_height) + to_fix(0.5)) >> 8);
             tx = 8'(line.ray_pos.x >> 14);
-            r = ty;
-            g = tx;
-            b = 0;
+            color = texture[256*ty + tx - 1];
         end else begin
-            r = 8'h11;
-            g = 8'h33;
-            b = 8'h77;
+            color = { 8'h77, 8'h33, 8'h11 };
         end
     end
     
@@ -432,27 +465,14 @@ module raycaster (  // coordinate width
 
         logic gridline_draw = (in_map) && (sy % MAP_S == 0 || sx % MAP_S == 0);
 
-        if (!de) begin
-            // black in blanking interval
-            r = 8'h0;
-            g = 8'h0;
-            b = 8'h0;
-        end else if (player_draw) begin
-            r = 8'hff;
-            g = 8'h0;
-            b = 8'h0;
+        if (player_draw) begin
+            color = { 8'h0, 8'h0, 8'hff };
         end else if (player_dir) begin
-            r = 8'h0;
-            g = 8'hff;
-            b = 8'h0;
+            color = { 8'h0, 8'hff, 8'hff };
         end else if (gridline_draw) begin
-            r = 8'h0;
-            g = 8'h0;
-            b = 8'h0;
+            color = { 8'h0, 8'h0, 8'h0 };
         end else if (map_draw) begin
-            r = 8'hff;
-            g = 8'hff;
-            b = 8'hff;
+            color = { 8'hff, 8'hff, 8'hff };
         end
     end
 `endif
@@ -461,8 +481,6 @@ module raycaster (  // coordinate width
         sx_out <= sx;
         sy_out <= sy;
         de_out <= de;
-        r_out <= de ? r : 8'h0;
-        g_out <= de ? g : 8'h0;
-        b_out <= de ? b : 8'h0;
+        { b_out, g_out, r_out } <= de ? color : { 8'h0, 8'h0, 8'h0 };
     end
 endmodule
