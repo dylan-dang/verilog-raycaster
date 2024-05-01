@@ -3,7 +3,7 @@
 
 `define fmask 32'h0000ffff // fractional part
 `define imask 32'hffff0000 // integer part
-// `define MAP_OVERLAY
+`define MAP_OVERLAY
 
 // Q16.16 fixed point number
 typedef logic signed [31:0] fix_t;
@@ -16,9 +16,17 @@ typedef struct packed {
 
 typedef struct packed {
     logic is_vert;
-    fix_t height;
-} line_t;
+    fix_t inv_dist;
+    fix_t distance;
+    vec_t pos;
+} ray_t;
 
+typedef struct packed {
+    logic is_vert;
+    fix_t height;
+    fix_t inv_height;
+    vec_t ray_pos;
+} line_t;
 
 typedef struct packed {
     uint8_t r;
@@ -57,9 +65,9 @@ module raycaster (  // coordinate width
     output      logic [9:0] sx_out,  // horizontal screen position
     output      logic [9:0] sy_out,  // vertical screen position
     output      logic de_out,              // data enable (low in blanking interval)
-    output      logic [7:0] r_out,         // 8-bit red
-    output      logic [7:0] g_out,         // 8-bit green
-    output      logic [7:0] b_out          // 8-bit blue
+    output      uint8_t r_out,         // 8-bit red
+    output      uint8_t g_out,         // 8-bit green
+    output      uint8_t b_out          // 8-bit blue
     );
 
     /* --------------------------- screen --------------------------- */
@@ -288,11 +296,11 @@ module raycaster (  // coordinate width
         end
     endfunction
 
-    function line_t cast_ray(fix_t angle);
+    function ray_t cast_ray(fix_t angle);
         vec_t h_ray, v_ray;
         vec_t h_ray_delta, v_ray_delta;
 
-        fix_t sqdist;
+        fix_t sq_d_scl, inv_dist_scl;
         logic[63:0] h_sqdist = 64'hefff_ffff_ffff_ffff;
         logic[63:0] v_sqdist = 64'hefff_ffff_ffff_ffff;
             
@@ -343,45 +351,64 @@ module raycaster (  // coordinate width
             
             // -------- get ray height --------
             cast_ray.is_vert = v_sqdist < h_sqdist;
-            sqdist = 32'((cast_ray.is_vert ? v_sqdist : h_sqdist) >> 32);
-            sqdist = mult(sqdist, cos(player_angle - angle));
-            cast_ray.height = mult(inv_sqrt(sqdist), to_fix(H_RES / 4));
+            // d^2 / 2^16
+            sq_d_scl = 32'((cast_ray.is_vert ? v_sqdist : h_sqdist) >> 32);
+            // 1/sqrt(d^2 / 2^16) = 2^8 / d =
+            inv_dist_scl = inv_sqrt(sq_d_scl);
+            cast_ray.inv_dist = inv_dist_scl >> 8;
+            cast_ray.distance = mult(inv_dist_scl, sq_d_scl) << 8;
+            cast_ray.pos = cast_ray.is_vert ? v_ray : h_ray;
         end
     endfunction
 
+
+    /* --------------------------- Rendering --------------------------- */
+    
     localparam real FOV = PI / 3; // 60deg
 
-    line_t lines [H_RES-1:0];
+    // ray_t rays [H_RES-1:0];
+    line_t lines[H_RES-1:0];
     always_ff @(posedge clk_in) begin
         // render on new frame and movement change
         if (frame && |(mvmt_in)) begin
             for (integer i = 0; i < H_RES; i++) begin
+                ray_t ray;
                 fix_t angle = (player_angle - to_fix(FOV / 2.0)) +
                                   to_fix(($itor(i) / $itor(H_RES)) * FOV);
                 // normalize angle
                 if (angle >= to_fix(2*PI)) angle-=to_fix(2*PI);
                 if (angle < to_fix(0)) angle+=to_fix(2*PI);
-                lines[i] = cast_ray(angle);
+                ray = cast_ray(angle);
+                // scale by secant of camera angle to fix fisheye
+                lines[i].height = mult(mult(mult(ray.inv_dist, to_fix(MAP_S)),
+                                to_fix(H_RES)), sec(player_angle - angle));
+                // inverse operations of lines[i].height
+                lines[i].inv_height = mult(mult(mult(ray.distance, to_fix(1.0/MAP_S)),
+                                to_fix(1.0/H_RES)), cos(player_angle - angle));
+                lines[i].is_vert = ray.is_vert;
+                lines[i].ray_pos = ray.pos;
             end
         end
     end
 
-    /* --------------------------- Rendering --------------------------- */
 
-    
-    logic [3:0] paint_r, paint_g, paint_b;
+    uint8_t r, g, b;
     always_comb begin
-        logic signed [31:0] bruh =  32'(sy) - 32'(V_RES/2);
+        uint8_t ty, tx;
         line_t line = lines[sx];
-        logic draw = -(line.height >> 17) < bruh && bruh < (line.height >> 17);
-        if (draw) begin
-            paint_r = line.is_vert ? 4'hf : 4'hc;
-            paint_g = 4'h0;
-            paint_b = line.is_vert ? 4'hf : 4'h0;
+        fix_t sy_f = 32'(sy) << 16;
+        logic on_line = near(sy_f, to_fix(V_RES/2), line.height >> 1);
+
+        if (on_line) begin
+            ty = 8'((mult(sy_f - to_fix(V_RES/2), line.inv_height) + to_fix(0.5)) >> 8);
+            tx = 8'(line.ray_pos.x >> 14);
+            r = ty;
+            g = tx;
+            b = 0;
         end else begin
-            paint_r = 4'h1;
-            paint_g = 4'h3;
-            paint_b = 4'h7;
+            r = 8'h11;
+            g = 8'h33;
+            b = 8'h77;
         end
     end
     
@@ -407,25 +434,25 @@ module raycaster (  // coordinate width
 
         if (!de) begin
             // black in blanking interval
-            paint_r = 4'h0;
-            paint_g = 4'h0;
-            paint_b = 4'h0;
+            r = 8'h0;
+            g = 8'h0;
+            b = 8'h0;
         end else if (player_draw) begin
-            paint_r = 4'hf;
-            paint_g = 4'h0;
-            paint_b = 4'h0;
+            r = 8'hff;
+            g = 8'h0;
+            b = 8'h0;
         end else if (player_dir) begin
-            paint_r = 4'h0;
-            paint_g = 4'hf;
-            paint_b = 4'h0;
+            r = 8'h0;
+            g = 8'hff;
+            b = 8'h0;
         end else if (gridline_draw) begin
-            paint_r = 4'h0;
-            paint_g = 4'h0;
-            paint_b = 4'h0;
+            r = 8'h0;
+            g = 8'h0;
+            b = 8'h0;
         end else if (map_draw) begin
-            paint_r = 4'hf;
-            paint_g = 4'hf;
-            paint_b = 4'hf;
+            r = 8'hff;
+            g = 8'hff;
+            b = 8'hff;
         end
     end
 `endif
@@ -434,8 +461,8 @@ module raycaster (  // coordinate width
         sx_out <= sx;
         sy_out <= sy;
         de_out <= de;
-        r_out <= de ? {2{paint_r}} : 8'h0;
-        g_out <= de ? {2{paint_g}} : 8'h0;
-        b_out <= de ? {2{paint_b}} : 8'h0;
+        r_out <= de ? r : 8'h0;
+        g_out <= de ? g : 8'h0;
+        b_out <= de ? b : 8'h0;
     end
 endmodule
