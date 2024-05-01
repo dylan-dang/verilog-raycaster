@@ -7,10 +7,10 @@
 
 // Q16.16 fixed point number
 typedef logic signed [31:0] fix_t;
+
 typedef logic[7:0] uint8_t;
 typedef logic[15:0] uint16_t;
 typedef logic[31:0] uint32_t;
-
 
 typedef struct packed {
     fix_t x;
@@ -162,19 +162,24 @@ module raycaster (  // coordinate width
 
     /* --------------------------- Map --------------------------- */
 
+    typedef enum logic[1:0] {
+        CELL_AIR,
+        CELL_OSAKA
+    } cell_t;
+
     localparam MAP_X = 8;
     localparam MAP_Y = 8;
     localparam MAP_S = 64;
-    logic map [MAP_Y-1:0][MAP_X-1:0];
+    cell_t map [MAP_Y-1:0][MAP_X-1:0];
     initial begin
-        $readmemh("level.mem", map);
+        $readmemh("levels/simple.mem", map);
     end
     
-    function logic is_clipping(input vec_t pos);
+    function cell_t cell_at(input vec_t pos);
         logic [$clog2(MAP_Y)-1:0] my = pos.y[21 + $clog2(MAP_Y):22];
         logic [$clog2(MAP_X)-1:0] mx = pos.x[21 + $clog2(MAP_X):22];
         begin
-            is_clipping = map[my][mx];
+            cell_at = map[my][mx];
         end
     endfunction
 
@@ -256,15 +261,15 @@ module raycaster (  // coordinate width
             if (key_up || key_down) begin
                 if (key_up) begin
                     player.x += player_delta.x;
-                    if (is_clipping(player)) player.x -= player_delta.x;
+                    if (|cell_at(player)) player.x -= player_delta.x;
                     player.y += player_delta.y;
-                    if (is_clipping(player)) player.y -= player_delta.y;
+                    if (|cell_at(player)) player.y -= player_delta.y;
                 end
                 if (key_down) begin
                     player.x -= player_delta.x;
-                    if (is_clipping(player)) player.x += player_delta.x;
+                    if (|cell_at(player)) player.x += player_delta.x;
                     player.y -= player_delta.y;
-                    if (is_clipping(player)) player.y += player_delta.y;
+                    if (|cell_at(player)) player.y += player_delta.y;
                 end
                 if (player.x < to_fix(5)) player.x = to_fix(5);
                 if (player.y < to_fix(5)) player.y = to_fix(5);
@@ -359,7 +364,7 @@ module raycaster (  // coordinate width
 
             if (!near(angle, to_fix(0)) && !near(angle, to_fix(PI))) begin
                 for (integer h_check = 0; h_check < MAP_Y; h_check++) begin
-                    if (is_clipping(h_ray)) begin
+                    if (|cell_at(h_ray)) begin
                         h_sqdist = sq_dist(player, h_ray);
                         break;
                     end
@@ -378,7 +383,7 @@ module raycaster (  // coordinate width
 
             if (!near(angle, to_fix(PI/2)) && !near(angle, to_fix(3*PI/2))) begin
                 for (integer v_check = 0; v_check < MAP_X; v_check++) begin
-                    if (is_clipping(v_ray)) begin
+                    if (|cell_at(v_ray)) begin
                         v_sqdist = sq_dist(player, v_ray);
                         break;
                     end 
@@ -440,18 +445,25 @@ module raycaster (  // coordinate width
 
         if (drawing_wall) begin
             ty = 8'((mult(sy_f - to_fix(V_RES/2), line.inv_height) + to_fix(0.5)) >> 8);
-            if (!line.is_vert) begin
-                tx = 8'(line.ray_pos.x >> 14);
-                // flip texture if angle < 180deg
-                if (line.ray_angle < to_fix(PI)) tx = -tx;
-            end else begin
+            ty = -ty; // flip for bmp reading
+            if (line.is_vert) begin
                 tx = 8'(line.ray_pos.y >> 14);
                 // flip texture if 90deg < angle < 270deg
                 if (line.ray_angle > to_fix(PI/2) &&
                     line.ray_angle < to_fix(3*PI/2)) tx = -tx;
+            end else begin
+                tx = 8'(line.ray_pos.x >> 14);
+                // flip texture if angle < 180deg
+                if (line.ray_angle < to_fix(PI)) tx = -tx;
             end
             // flip texture if angle > 180deg
-            color = texture[256*(256-ty) + tx - 1];
+            color = texture[256*ty + tx];
+
+            if (line.is_vert) begin
+                color.r >>= 1;
+                color.g >>= 1;
+                color.b >>= 1;
+            end
         end else begin
             color = { 8'h77, 8'h33, 8'h11 };
         end
