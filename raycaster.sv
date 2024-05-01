@@ -3,7 +3,7 @@
 
 `define fmask 32'h0000ffff // fractional part
 `define imask 32'hffff0000 // integer part
-`define MAP_OVERLAY
+// `define MAP_OVERLAY
 
 // Q16.16 fixed point number
 typedef logic signed [31:0] fix_t;
@@ -29,6 +29,7 @@ typedef struct packed {
     fix_t height;
     fix_t inv_height;
     vec_t ray_pos;
+    fix_t ray_angle;
 } line_t;
 
 typedef struct packed {
@@ -185,7 +186,7 @@ module raycaster (  // coordinate width
         integer fd;
         uint16_t signature, color_planes, bpp;
         uint32_t data_offset, width, height;
-        fd = $fopen("assets/osaka.bmp", "rb");
+        fd = $fopen("textures/osaka.bmp", "rb");
         $fread(signature, fd, 0);
         if (signature != 16'h424d) begin
             $display("image is not a bitmap");
@@ -424,6 +425,7 @@ module raycaster (  // coordinate width
                                 to_fix(1.0/H_RES)), cos(player_angle - angle));
                 lines[i].is_vert = ray.is_vert;
                 lines[i].ray_pos = ray.pos;
+                lines[i].ray_angle = angle;
             end
         end
     end
@@ -434,12 +436,22 @@ module raycaster (  // coordinate width
         uint8_t ty, tx;
         line_t line = lines[sx];
         fix_t sy_f = 32'(sy) << 16;
-        logic on_line = near(sy_f, to_fix(V_RES/2), line.height >> 1);
+        logic drawing_wall = near(sy_f, to_fix(V_RES/2), line.height >> 1);
 
-        if (on_line) begin
+        if (drawing_wall) begin
             ty = 8'((mult(sy_f - to_fix(V_RES/2), line.inv_height) + to_fix(0.5)) >> 8);
-            tx = 8'(line.ray_pos.x >> 14);
-            color = texture[256*ty + tx - 1];
+            if (!line.is_vert) begin
+                tx = 8'(line.ray_pos.x >> 14);
+                // flip texture if angle < 180deg
+                if (line.ray_angle < to_fix(PI)) tx = -tx;
+            end else begin
+                tx = 8'(line.ray_pos.y >> 14);
+                // flip texture if 90deg < angle < 270deg
+                if (line.ray_angle > to_fix(PI/2) &&
+                    line.ray_angle < to_fix(3*PI/2)) tx = -tx;
+            end
+            // flip texture if angle > 180deg
+            color = texture[256*(256-ty) + tx - 1];
         end else begin
             color = { 8'h77, 8'h33, 8'h11 };
         end
