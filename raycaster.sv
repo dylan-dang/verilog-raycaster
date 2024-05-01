@@ -3,7 +3,7 @@
 
 `define fmask 32'h0000ffff // fractional part
 `define imask 32'hffff0000 // integer part
-// `define MAP_OVERLAY
+`define MAP_OVERLAY
 
 // Q16.16 fixed point number
 typedef logic signed [31:0] fix_t;
@@ -17,11 +17,19 @@ typedef struct packed {
     fix_t y;
 } vec_t;
 
+typedef enum logic[1:0] {
+    CELL_AIR,
+    CELL_OSAKA,
+    CELL_GRASS,
+    CELL_HUOHUO
+} cell_t;
+
 typedef struct packed {
     logic is_vert;
     fix_t inv_dist;
     fix_t distance;
     vec_t pos;
+    cell_t cell_type;
 } ray_t;
 
 typedef struct packed {
@@ -30,6 +38,7 @@ typedef struct packed {
     fix_t inv_height;
     vec_t ray_pos;
     fix_t ray_angle;
+    cell_t cell_type;
 } line_t;
 
 typedef struct packed {
@@ -166,32 +175,30 @@ module raycaster (
 
     /* --------------------------- Map --------------------------- */
 
-    typedef enum logic[1:0] {
-        CELL_AIR,
-        CELL_OSAKA
-    } cell_t;
-
     localparam MAP_X = 8;
     localparam MAP_Y = 8;
-    localparam MAP_S = 64;
+    localparam MAP_S = 32;
     cell_t map [MAP_Y-1:0][MAP_X-1:0];
     initial begin
-        $readmemh("levels/simple.mem", map);
+        $readmemh("levels/multi.mem", map);
     end
     
     function cell_t cell_at(input vec_t pos);
-        logic [$clog2(MAP_Y)-1:0] my = pos.y[21 + $clog2(MAP_Y):22];
-        logic [$clog2(MAP_X)-1:0] mx = pos.x[21 + $clog2(MAP_X):22];
+        // logic [$clog2(MAP_Y)-1:0] my = pos.y[21 + $clog2(MAP_Y): 16 + $clog2(MAP_S)];
+        // logic [$clog2(MAP_X)-1:0] mx = pos.x[21 + $clog2(MAP_X): 16 + $clog2(MAP_S)];
         begin
-            cell_at = map[my][mx];
+            cell_at = map[($clog2(MAP_Y))'(pos.y >> (16 + $clog2(MAP_S)))][($clog2(MAP_X))'(pos.x >> (16 + $clog2(MAP_S)))];
         end
     endfunction
 
     /* --------------------------- Texture --------------------------- */
 
-    typedef color_t texture_t [(256*256)-1:0];
+    localparam TEX_X = 256;
+    localparam TEX_Y = 256;
 
-    texture_t osaka_tex;
+    typedef color_t texture_t [(TEX_X*TEX_Y)-1:0];
+
+    texture_t textures[2:0];
 
     function texture_t load_bmp (string path);
         integer fd;
@@ -214,8 +221,9 @@ module raycaster (
             width = {<<8{width}};
             $fread(height, fd);
             height = {<<8{height}};
-            if (width != 256 || height != 256) begin
-                $display("image is must be 256x256, found %dx%d.", width, height);
+            if (width != TEX_X || height != TEX_Y) begin
+                $display("image is must be %dx%d, found %dx%d.", TEX_X, TEX_Y,
+                width, height);
                 $finish;
             end
 
@@ -239,8 +247,11 @@ module raycaster (
     endfunction
 
     initial begin
-        osaka_tex = load_bmp("textures/osaka.bmp");
+        textures[CELL_OSAKA-1] = load_bmp("textures/osaka.bmp");
+        textures[CELL_GRASS-1] = load_bmp("textures/grass.bmp");
+        textures[CELL_HUOHUO-1] = load_bmp("textures/huohuo.bmp");
     end
+
 
     /* --------------------------- Movement --------------------------- */
 
@@ -415,6 +426,7 @@ module raycaster (
             cast_ray.inv_dist = inv_dist_scl >> 8;
             cast_ray.distance = mult(inv_dist_scl, sq_d_scl) << 8;
             cast_ray.pos = cast_ray.is_vert ? v_ray : h_ray;
+            cast_ray.cell_type = cell_at(cast_ray.pos);
         end
     endfunction
 
@@ -445,6 +457,7 @@ module raycaster (
                 lines[i].is_vert = ray.is_vert;
                 lines[i].ray_pos = ray.pos;
                 lines[i].ray_angle = angle;
+                lines[i].cell_type = ray.cell_type;
             end
         end
     end
@@ -470,7 +483,7 @@ module raycaster (
                 if (line.ray_angle < to_fix(PI)) tx = -tx;
             end
             // flip texture if angle > 180deg
-            color = osaka_tex[256*ty + tx];
+            color = textures[line.cell_type-1][TEX_Y*ty + tx];
             // shade vertical walls
             if (line.is_vert) begin
                 color.r >>= 1;
@@ -485,32 +498,30 @@ module raycaster (
 `ifdef MAP_OVERLAY
     localparam P_SIZE = 5;
     always_comb begin
-        logic player_draw = near(sx player.x)
-        logic player_draw = 
-            (32'(sx) >= (player.x >> 16) - P_SIZE) &&
-            (32'(sx) <  (player.x >> 16) + P_SIZE) &&
-            (32'(sy) >= (player.y >> 16) - P_SIZE) &&
-            (32'(sy) <  (player.y >> 16) + P_SIZE);
+        logic player_draw = near(sx_f, player.x, to_fix(P_SIZE)) &&
+                            near(sy_f, player.y, to_fix(P_SIZE));
 
-        logic player_dir = 
-            (32'(sx) >= ((player.x + 4 * player_delta.x) >> 16) - P_SIZE) &&
-            (32'(sx) <  ((player.x + 4 * player_delta.x) >> 16) + P_SIZE) &&
-            (32'(sy) >= ((player.y + 4 * player_delta.y) >> 16) - P_SIZE) &&
-            (32'(sy) <  ((player.y + 4 * player_delta.y) >> 16) + P_SIZE);
+        logic player_dir_draw =
+            near(sx_f, player.x + 4*player_delta.x, to_fix(P_SIZE)) &&
+            near(sy_f, player.y + 4*player_delta.y, to_fix(P_SIZE));
+
         logic in_map = sx/MAP_S < MAP_X && sy/MAP_S < MAP_Y;
+        cell_t overlay_cell = map[sy / MAP_S][sx / MAP_S];
 
-        logic map_draw = (in_map) && (map[sy / MAP_S][sx / MAP_S]) && (sx % 2 == 0 && sy % 2 == 0);
+        uint8_t ty, tx;
 
         logic gridline_draw = (in_map) && (sy % MAP_S == 0 || sx % MAP_S == 0);
 
         if (player_draw) begin
             color = { 8'h0, 8'h0, 8'hff };
-        end else if (player_dir) begin
+        end else if (player_dir_draw) begin
             color = { 8'h0, 8'hff, 8'hff };
         end else if (gridline_draw) begin
             color = { 8'h0, 8'h0, 8'h0 };
-        end else if (map_draw) begin
-            color = { 8'hff, 8'hff, 8'hff };
+        end else if (in_map && |overlay_cell) begin
+            ty = -(8'(sy) % MAP_S << ($clog2(TEX_Y) - $clog2(MAP_S)));
+            tx = 8'(sx) % MAP_S << ($clog2(TEX_Y) - $clog2(MAP_S));
+            color = textures[overlay_cell-1][ty * TEX_Y + tx];
         end
     end
 `endif

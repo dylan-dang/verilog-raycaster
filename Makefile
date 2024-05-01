@@ -10,7 +10,7 @@ build: raycaster.sv
 run:
 	./obj_dir/raycaster
 
-start: build run
+start: clean build run
 
 clean:
 	rm -rf ./obj_dir
