@@ -15,7 +15,4 @@ start: build run
 clean:
 	rm -rf ./obj_dir
 
-build-img2mem:
-	g++ img2mem.cpp -o img2mem ${SDL_CFLAGS} ${SDL_LDFLAGS}
-
 .PHONY: all clean
