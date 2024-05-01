@@ -475,7 +475,7 @@ module raycaster (
             ) begin
                 for (integer v_check = 0; v_check < MAP_X; v_check++) begin
                     v_ray.x += v_fuzz;
-                    cell_v = |cell_at(v_ray);
+                    cell_v = cell_at(v_ray);
                     v_ray.x -= v_fuzz;
                     if (|cell_v) begin
                         v_sqdist = sq_dist(player, v_ray);
