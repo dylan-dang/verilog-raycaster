@@ -77,10 +77,10 @@ module raycaster (  // coordinate width
     /* --------------------------- trig LUT --------------------------- */
     // feature idea: lerp between entries
 
+    localparam real PI = 3.14159265358979323846;
     localparam SAMPLES = 256;
     fix_t sin_table[SAMPLES];
     fix_t sec_table[SAMPLES];
-    localparam PI = 3.14159265358979323846;
     generate
         for(genvar i = 0; i < SAMPLES; i++) begin
             assign sin_table[i] = to_fix($sin(PI/2 * i/SAMPLES));
