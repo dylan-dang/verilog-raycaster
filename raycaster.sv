@@ -414,10 +414,8 @@ module raycaster (
         logic[63:0] sqdist;
             
         fix_t ncot_ra = -cot(angle);
-        logic facing_up = angle > to_fix(PI);
-
         fix_t ntan_ra = -tan(angle);
-        logic facing_left = angle > to_fix(PI/2) && angle < to_fix(3*PI/2);
+        
         fix_t h_fuzz = to_fix(0.2), v_fuzz = to_fix(0.2);
         logic clip_h, clip_v;
         
@@ -427,13 +425,17 @@ module raycaster (
             // round down to nearest scale unit
             h_ray.y = mult(mult(player.y, to_fix(1.0/MAP_SCALE_Y)) &
                       32'hffff0000, to_fix(MAP_SCALE_Y));
-            // start at first possible wall intersection
-            if (!facing_up) h_ray.y += to_fix(MAP_SCALE_Y);
-            h_ray.x = mult(player.y - h_ray.y, ncot_ra) + player.x;
 
-            h_ray_delta.y = facing_up ? to_fix(-MAP_SCALE_Y) : to_fix(MAP_SCALE_Y);
+            h_ray_delta.y = to_fix(MAP_SCALE_Y);
+            if (angle < to_fix(PI)) begin
+                // facing down
+                h_ray.y += h_ray_delta.y;
+            end else begin
+                h_ray_delta.y = -h_ray_delta.y;
+                h_fuzz = -h_fuzz;
+            end
+            h_ray.x = mult(player.y - h_ray.y, ncot_ra) + player.x;
             h_ray_delta.x = mult(-h_ray_delta.y, ncot_ra);
-            h_fuzz = facing_up ? to_fix(-0.2) : to_fix(0.2);
 
             if (!near(angle, to_fix(0)) && !near(angle, to_fix(PI))) begin
                 for (integer h_check = 0; h_check < MAP_Y; h_check++) begin
@@ -454,13 +456,18 @@ module raycaster (
             // round down to nearest scale unit
             v_ray.x = mult(mult(player.x, to_fix(1.0/MAP_SCALE_X)) &
                       32'hffff0000, to_fix(MAP_SCALE_X));
-            // start at first possible wall intersection
-            v_ray.x += facing_left ? 0 : to_fix(MAP_SCALE_X);
-            v_ray.y = mult(player.x - v_ray.x, ntan_ra) + player.y;
 
-            v_ray_delta.x = facing_left ? to_fix(-MAP_SCALE_X) : to_fix(MAP_SCALE_X);
+            v_ray_delta.x = to_fix(MAP_SCALE_X);
+            if (angle < to_fix(PI/2) || angle > to_fix(3*PI/2)) begin
+                // facing right
+                v_ray.x += v_ray_delta.x;
+            end else begin
+                v_ray_delta.x = -v_ray_delta.x;
+                v_fuzz = -v_fuzz;
+            end
+
+            v_ray.y = mult(player.x - v_ray.x, ntan_ra) + player.y;
             v_ray_delta.y = mult(-v_ray_delta.x, ntan_ra);
-            v_fuzz = facing_left ? to_fix(-0.2) : to_fix(0.2);
 
             if (
                 !near(angle, to_fix(PI/2)) &&
@@ -504,11 +511,14 @@ module raycaster (
     
     localparam real FOV = `FOV;
 
+    logic is_first_frame = 1;
+
     // ray_t rays [H_RES-1:0];
     line_t lines[H_RES-1:0];
     always_ff @(posedge clk_in) begin
         // render on new frame and movement change
-        if (frame && |(mvmt_in)) begin
+        if (frame && (|(mvmt_in) || is_first_frame)) begin
+            is_first_frame = 0;
             for (integer i = 0; i < H_RES; i++) begin
                 ray_t ray;
                 fix_t angle = (player_angle - to_fix(FOV / 2.0)) +
@@ -566,8 +576,12 @@ module raycaster (
                 color.g >>= 1;
                 color.b >>= 1;
             end
-        end else begin
+        end else if (sy_f < to_fix(V_RES/2)) begin
+            // ceiling
             color = { 8'h77, 8'h33, 8'h11 };
+        end else begin
+            // floor
+            color = { 8'h88, 8'h88, 8'h88 };
         end
     end
     
