@@ -1,7 +1,7 @@
 `default_nettype none
 `timescale 1ns / 1ps
 
-`define LEVEL     "levels/8x8/open.mem"
+`define LEVEL     "levels/8x8/simple.mem"
 `define MAP_X     8
 `define MAP_Y     8
 `define MAP_SCALE_X 64
