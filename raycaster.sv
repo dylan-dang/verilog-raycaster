@@ -22,7 +22,7 @@
 
 `define TRIG_SAMPLES 256
 
-// `define MAP_OVERLAY
+`define MAP_OVERLAY
 `define OVERLAY_SCALE_X     0.5
 `define OVERLAY_SCALE_Y     0.5
 `define OVERLAY_OFFSET_X    0.0
@@ -417,7 +417,7 @@ module raycaster (
         fix_t ntan_ra = -tan(angle);
         
         fix_t h_fuzz = to_fix(0.2), v_fuzz = to_fix(0.2);
-        logic clip_h, clip_v;
+        cell_t cell_h, cell_v;
         
         begin
             // -------- check horizontal walls --------
@@ -440,9 +440,9 @@ module raycaster (
             if (!near(angle, to_fix(0)) && !near(angle, to_fix(PI))) begin
                 for (integer h_check = 0; h_check < MAP_Y; h_check++) begin
                     h_ray.y += h_fuzz;
-                    clip_h = |cell_at(h_ray);
+                    cell_h = cell_at(h_ray);
                     h_ray.y += h_fuzz;
-                    if (clip_h) begin
+                    if (|cell_h) begin
                         h_sqdist = sq_dist(player, h_ray);
                         break;
                     end
@@ -475,9 +475,9 @@ module raycaster (
             ) begin
                 for (integer v_check = 0; v_check < MAP_X; v_check++) begin
                     v_ray.x += v_fuzz;
-                    clip_v = |cell_at(v_ray);
+                    cell_v = |cell_at(v_ray);
                     v_ray.x -= v_fuzz;
-                    if (clip_v) begin
+                    if (|cell_v) begin
                         v_sqdist = sq_dist(player, v_ray);
                         break;
                     end 
@@ -501,7 +501,7 @@ module raycaster (
                 cast_ray.inv_dist = inv_dist_scl >> 8;
                 cast_ray.distance = mult(inv_dist_scl, sqdist_scl) << 8;
                 cast_ray.pos = cast_ray.is_vert ? v_ray : h_ray;
-                cast_ray.cell_type = cell_at(cast_ray.pos);
+                cast_ray.cell_type = cast_ray.is_vert ? cell_v : cell_h;
             end
         end
     endfunction
