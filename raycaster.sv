@@ -578,10 +578,10 @@ module raycaster (
             end
         end else if (sy_f < to_fix(V_RES/2)) begin
             // ceiling
-            color = { 8'hf8, 8'h7c, 8'h32 };
+            color = 24'hf97f37;
         end else begin
             // floor
-            color = { 8'h88, 8'h88, 8'h88 };
+            color = 24'h888888;
         end
     end
     
@@ -615,7 +615,7 @@ module raycaster (
             near(s_pos.y, player.y, to_fix(OVERLAY_PLAYER_SIZE))
         ) begin
             // drawing player position
-            color = { 8'h0, 8'h0, 8'hff };
+            color = 24'h0000ff;
         end else if (
             near(s_pos.x, player.x + player_delta.x, 
                  to_fix(OVERLAY_PLAYER_SIZE)) &&
@@ -623,13 +623,13 @@ module raycaster (
                  to_fix(OVERLAY_PLAYER_SIZE))
         ) begin
             // drawing player direction
-            color = { 8'h0, 8'hff, 8'hff };
+            color = 24'h00ffff;
         end else if (
             in_map_bounds &&
             (near(s_cell_pos.x, 0) || near(s_cell_pos.y, 0))
         ) begin
             // drawing gridline
-            color = { 8'h0, 8'h0, 8'h0 };
+            color = 24'h000000;
         end else if (in_map_bounds && |cell_overlay) begin
             // drawing map cell
             tx = 8'(mult(s_cell_pos.x, to_fix(TEX_X/MAP_SCALE_X)) >> 16);
@@ -643,6 +643,6 @@ module raycaster (
         sx_out <= sx;
         sy_out <= sy;
         de_out <= de;
-        { b_out, g_out, r_out } <= de ? color : { 8'h0, 8'h0, 8'h0 };
+        { b_out, g_out, r_out } <= de ? color : 24'h000000;
     end
 endmodule
