@@ -62,21 +62,25 @@ function logic near(input fix_t a, b, tolerance = to_fix(0.01));
     end
 endfunction
 
-module raycaster (  // coordinate width
-    input  wire logic clk_in,             // pixel clock
-    input  wire logic rst_in,             // sim reset
-    input  wire logic[3:0] mvmt_in,       // player movement
+module raycaster (
+    input  wire logic clk_in,        // pixel clock
+    input  wire logic rst_in,        // sim reset
+    input  wire logic[3:0] mvmt_in,  // player movement
     output      logic [9:0] sx_out,  // horizontal screen position
     output      logic [9:0] sy_out,  // vertical screen position
-    output      logic de_out,              // data enable (low in blanking interval)
-    output      uint8_t r_out,         // 8-bit red
-    output      uint8_t g_out,         // 8-bit green
-    output      uint8_t b_out          // 8-bit blue
+    output      logic de_out,        // data enable (low in blanking interval)
+    output      uint8_t r_out,       // 8-bit red
+    output      uint8_t g_out,       // 8-bit green
+    output      uint8_t b_out        // 8-bit blue
     );
 
     /* --------------------------- screen --------------------------- */
 
     logic [9:0] sx, sy;
+    fix_t sx_f, sy_f;
+    assign sx_f = { {(16-$bits(sx)){1'h0}}, sx, 16'h0};
+    assign sy_f = { {(16-$bits(sy)){1'h0}}, sy, 16'h0};
+
     logic de;
     screen display_inst (
         .clk_in,
@@ -185,48 +189,58 @@ module raycaster (  // coordinate width
 
     /* --------------------------- Texture --------------------------- */
 
-    color_t texture[(256*256)-1:0];
+    typedef color_t texture_t [(256*256)-1:0];
 
-    initial begin
+    texture_t osaka_tex;
+
+    function texture_t load_bmp (string path);
         integer fd;
         uint16_t signature, color_planes, bpp;
         uint32_t data_offset, width, height;
-        fd = $fopen("textures/osaka.bmp", "rb");
-        $fread(signature, fd, 0);
-        if (signature != 16'h424d) begin
-            $display("image is not a bitmap");
-            $finish;
-        end
-        $fseek(fd, 32'ha, 0);
-        $fread(data_offset, fd);
-        data_offset = {<<8{data_offset}}; // reverse endianness
+        texture_t texture;
+        begin
+            fd = $fopen(path, "rb");
+            $fread(signature, fd, 0);
+            if (signature != 16'h424d) begin
+                $display("image is not a bitmap");
+                $finish;
+            end
+            $fseek(fd, 32'ha, 0);
+            $fread(data_offset, fd);
+            data_offset = {<<8{data_offset}}; // reverse endianness
 
-        $fseek(fd, 32'h12, 0);
-        $fread(width, fd);
-        width = {<<8{width}};
-        $fread(height, fd);
-        height = {<<8{height}};
-        if (width != 256 || height != 256) begin
-            $display("image is must be 256x256, found %dx%d.", width, height);
-            $finish;
-        end
+            $fseek(fd, 32'h12, 0);
+            $fread(width, fd);
+            width = {<<8{width}};
+            $fread(height, fd);
+            height = {<<8{height}};
+            if (width != 256 || height != 256) begin
+                $display("image is must be 256x256, found %dx%d.", width, height);
+                $finish;
+            end
 
-        $fread(color_planes, fd);
-        color_planes = {<<8{color_planes}};
-        if (color_planes != 1) begin
-            $display("image must have 1 color plane, found %d.", color_planes);
-        end
+            $fread(color_planes, fd);
+            color_planes = {<<8{color_planes}};
+            if (color_planes != 1) begin
+                $display("image must have 1 color plane, found %d.", color_planes);
+            end
 
-        $fread(bpp, fd);
-        bpp = {<<8{bpp}};
-        if (bpp != 24) begin
-            $display("image encoding must be 24-bit/pixel, found %d.", bpp);
-        end
+            $fread(bpp, fd);
+            bpp = {<<8{bpp}};
+            if (bpp != 24) begin
+                $display("image encoding must be 24-bit/pixel, found %d.", bpp);
+            end
 
-        $fseek(fd, data_offset, 0);
-        $fread(texture, fd);
-        $fclose(fd);
-    end 
+            $fseek(fd, data_offset, 0);
+            $fread(texture, fd);
+            $fclose(fd);
+            load_bmp = texture;
+        end
+    endfunction
+
+    initial begin
+        osaka_tex = load_bmp("textures/osaka.bmp");
+    end
 
     /* --------------------------- Movement --------------------------- */
 
@@ -440,7 +454,6 @@ module raycaster (  // coordinate width
     always_comb begin
         uint8_t ty, tx;
         line_t line = lines[sx];
-        fix_t sy_f = 32'(sy) << 16;
         logic drawing_wall = near(sy_f, to_fix(V_RES/2), line.height >> 1);
 
         if (drawing_wall) begin
@@ -457,8 +470,8 @@ module raycaster (  // coordinate width
                 if (line.ray_angle < to_fix(PI)) tx = -tx;
             end
             // flip texture if angle > 180deg
-            color = texture[256*ty + tx];
-
+            color = osaka_tex[256*ty + tx];
+            // shade vertical walls
             if (line.is_vert) begin
                 color.r >>= 1;
                 color.g >>= 1;
@@ -472,6 +485,7 @@ module raycaster (  // coordinate width
 `ifdef MAP_OVERLAY
     localparam P_SIZE = 5;
     always_comb begin
+        logic player_draw = near(sx player.x)
         logic player_draw = 
             (32'(sx) >= (player.x >> 16) - P_SIZE) &&
             (32'(sx) <  (player.x >> 16) + P_SIZE) &&
