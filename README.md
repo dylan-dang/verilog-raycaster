@@ -60,40 +60,40 @@ player, we want to check every possible intersection with a grid line of the map
 and get the closest wall. Grid lines can be split into two cases, horizontal
 and vertical. Let's do the horizontal case. We want to get the ray's closest
 horizontal gridline in front. We can get this by rounding down the
-players y position, let's call this $$y_p$$, down. This gridline will always be
+players y position, let's call this $y_p$, down. This gridline will always be
 above the player, so when facing down we want to add a scaled unit to get the
 grid line below the player. If facing up, we can leave it be. Let's call this
-closed gridline y in front of the player, $$y_h$$.
+closed gridline y in front of the player, $y_h$.
 
 Now we want to the x value on this grid line a ray is looking at. To do
 this, we can imagine a right triangle with a height equal to the difference
-between $$y_p$$ and $$y_h$$, i.e $$\Delta y$$. We know the angle of the ray, $$\theta$$.
-Since we have the adjacent angle, recall the length, $$\Delta x ={\Delta y \over
-\tan \theta} = \Delta y \cot \theta$$. We can get the absolute
-x position, $$x_h$$ by adding it to the player's x, $$ x_p + \Delta x$$. Thus, we
-have the first wall possible intersection $$(x_h, y_h)$$. To get the second one
-we can simply add or subtract a scaled unit from $$y_h$$ based on the ray
-direction to find the gridline after it. This will be $$\Delta y_h$$.
-Then to get $$\Delta y_x$$, once again do $$\Delta y_h \cot \theta $$. These values
+between $y_p$ and $y_h$, i.e $\Delta y$. We know the angle of the ray, $\theta$.
+Since we have the adjacent angle, recall the length, $\Delta x ={\Delta y \over
+\tan \theta} = \Delta y \cot \theta$. We can get the absolute
+x position, $x_h$ by adding it to the player's x, $ x_p + \Delta x$. Thus, we
+have the first wall possible intersection $(x_h, y_h)$. To get the second one
+we can simply add or subtract a scaled unit from $y_h$ based on the ray
+direction to find the gridline after it. This will be $\Delta y_h$.
+Then to get $\Delta y_x$, once again do $\Delta y_h \cot \theta $. These values
 will be same between each gridline. Then, For each possible intersection we can
 index into wall's cell's index and check its type. If the type is not air we
 have found it. This process can be limited to number of cells in the level's
 dimension.
 
 The same process can be done for vertical grid lines as well, except we swap
-$$x$$ and $$y$$ and use $$tan \theta$$ since we need the adjacent side. Then, with
+$x$ and $y$ and use $tan \theta$ since we need the adjacent side. Then, with
 these two rays we choose the one with the shorter distance. That's one ray.
 Now we send a ray for each pixel on the screen within the the field view. We
 want walls to get smaller the further away they are, so we will take the
 reciprocal of the distance. However since the edges of the field view are
 longer we end up with a fisheye effect. So we can multiply distance by the
-$$\cos(\theta_{player} - \theta_{ray})$$ to correct for that. After we
+$\cos(\theta_{player} - \theta_{ray})$ to correct for that. After we
 scale the inverse distance by the wall height and the screen height. We get the
 height of the line to draw in screen space. All the lines when centered on
 the horizon line create a convincing 3d effect!
 
-Ranging $$v$$ from the bottom of the line to the top of the line, we can sample
-the row of texture image array. Then using length $$u$$ where the ray intersects
+Ranging $v$ from the bottom of the line to the top of the line, we can sample
+the row of texture image array. Then using length $u$ where the ray intersects
 the cell, we can use this to sample the column of the texture image array.
 This allows us to texture different walls. Each cell can also contain different
 wall types to have different textures to sample from. We can store whether the
@@ -160,15 +160,15 @@ root. Which will be explained in the two sections.
 
 Working with angles inherantly requires us to use trignometry, but how do
 compute them? The answer is we don't! To compute the sine of an angle, I simply
-take evenly spaced samples of $$\sin$$ from $$0$$ to $$\pi \over 2$$ to create a
+take evenly spaced samples of $\sin$ from $0$ to $\pi \over 2$ to create a
 lookup table (LUT) at compile time. We can exploit the symmetry of sine to store
 only a fourth of values necessary for an entire circle. Then cosine can be
-derived by $$ \cos x = \sin (x + {\pi \over 2}) $$.
+derived by $ \cos x = \sin (x + {\pi \over 2}) $.
 
 This is all fine and dandy for sine and cosine, but
-$$ \tan x = {\sin x \over \cos x} $$ and as stated before, we do _not_ want to
+$ \tan x = {\sin x \over \cos x} $ and as stated before, we do _not_ want to
 perform division. Therefore, we must store a second lookup table for
-$$ 1 \over \cos x $$, also known as $$ \sec x $$ and we turn our division problem
+$ 1 \over \cos x $, also known as $ \sec x $ and we turn our division problem
 into multiplication. With these two tables it is enought to derive all 6
 trigonometric functions using trigonometric identities.
 
@@ -183,30 +183,30 @@ h_{line} = {s_{z}h_{screen}{\sec {(\theta_{player} - \theta_{ray})}} \over
 $$
 
 Everything is fine, except for the pesky sqrt and division. Killing two birds
-one stone, we reduce our problem to finding $$ 1 \over \sqrt x $$. However,
-a relatively precise lookup table for $$ 2 ^{32} $$ possible values is far too
+one stone, we reduce our problem to finding $ 1 \over \sqrt x $. However,
+a relatively precise lookup table for $ 2 ^{32} $ possible values is far too
 much. There is no repitiion such as in the trigonometry function in which we
 can exploit. This is where our old friend Newton's method comes into play.
 
 Using Newton's method we can get a sucessively better approximations using
 fixed number of iterations to finding root of a function with an good initial
-guess. Applying Newton's method to $$ x - {1 \over y^2} = 0 $$, We have
+guess. Applying Newton's method to $ x - {1 \over y^2} = 0 $, We have
 
 $$
     y_{n + 1} =  y_n ({3 \over 2} - {x \over 2} y_n ^2 )
 $$
 
-So now, $$ 3 \over 2 $$ can be stored as a constant and $$ x \over 2 $$ can be
+So now, $ 3 \over 2 $ can be stored as a constant and $ x \over 2 $ can be
 calculated with a bit shift. With this, we are back to multiplication and
 addition! This equation is well known for its use in Quake III Arena. However,
 we don't have the luxury of exploiting the structure of floating point numbers
 to get a good initial guess. So instead, we perform an expontential samples and
 store them in another LUT for our initial guesses. Furthermore, we can also
-simply get distance by just multiplying since $$ {x \over \sqrt x} = \sqrt x $$.
+simply get distance by just multiplying since $ {x \over \sqrt x} = \sqrt x $.
 
-Last problem is that our square distance, $$ x $$, overflows our Q16.16 input. So,
-before putting it in `inv_sqrt` we divide it by $$ 2^{16} $$ through a bit shift
-and then we can restore it by dividing again it by $$ \sqrt {2 ^ {16}} = 2^8 $$.
+Last problem is that our square distance, $ x $, overflows our Q16.16 input. So,
+before putting it in `inv_sqrt` we divide it by $ 2^{16} $ through a bit shift
+and then we can restore it by dividing again it by $ \sqrt {2 ^ {16}} = 2^8 $.
 And there we have it.
 
 ## Customization
