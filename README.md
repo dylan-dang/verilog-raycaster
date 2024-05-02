@@ -45,10 +45,62 @@ make start
 
 This raycaster module outputs a 3d projection of level on a 640x480 screen
 by casting rays from a player point to to determine intersections with a grid
-of cells. This algorithm is ran the blanking interval, and outputs colored
-pixels every clock cycle while data enable pin is high. It takes in the
-movement key inputs to update the internal player and rerender the scene.
-It supports textures and custom maps.
+of cells given by a level rom. This algorithm is ran in the blanking interval
+and outputs colored pixels every clock cycle while the data enable pin is high.
+It recieves movement key inputs to update the internal player and rerender
+the scene. It supports custom bitmap textures and custom levels. This module
+is compiled into a C++ object by Verilator where it can be simulated by
+simulate.cpp with a virtual screen window created by SDL2.
+
+### How Raycasting Works
+
+Firstly we have a level populated by N by M cells, and each cell has 4 walls.
+Each dimension of a cell one scaled unit long. When casting a ray from the
+player, we want to check every possible intersection with a grid line of the map
+and get the closest wall. Grid lines can be split into two cases, horizontal
+and vertical. Let's do the horizontal case. We want to get the ray's closest
+horizontal gridline in front. We can get this by rounding down the
+players y position, let's call this $y_p$, down. This gridline will always be
+above the player, so when facing down we want to add a scaled unit to get the
+grid line below the player. If facing up, we can leave it be. Let's call this
+closed gridline y in front of the player, $y_h$.
+
+Now we want to the x value on this grid line a ray is looking at. To do
+this, we can imagine a right triangle with a height equal to the difference
+between $y_p$ and $y_h$, i.e $\Delta y$. We know the angle of the ray, $\theta$.
+Since we have the adjacent angle, recall the length, $\Delta x ={\Delta y \over
+\tan \theta} = \Delta y \cot \theta$. We can get the absolute
+x position, $x_h$ by adding it to the player's x, $ x_p + \Delta x$. Thus, we
+have the first wall possible intersection $(x_h, y_h)$. To get the second one
+we can simply add or subtract a scaled unit from $y_h$ based on the ray
+direction to find the gridline after it. This will be $\Delta y_h$.
+Then to get $\Delta y_x$, once again do $\Delta y_h \cot \theta $. These values
+will be same between each gridline. Then, For each possible intersection we can
+index into wall's cell's index and check its type. If the type is not air we
+have found it. This process can be limited to number of cells in the level's
+dimension.
+
+The same process can be done for vertical grid lines as well, except we swap
+$x$ and $y$ and use $tan \theta$ since we need the adjacent side. Then, with
+these two rays we choose the one with the shorter distance. That's one ray.
+Now we send a ray for each pixel on the screen within the the field view. We
+want walls to get smaller the further away they are, so we will take the
+reciprocal of the distance. However since the edges of the field view are
+longer we end up with a fisheye effect. So we can multiply distance by the
+$\cos(\theta_{player} - \theta_{ray})$ to correct for that. After we
+scale the inverse distance by the wall height and the screen height. We get the
+height of the line to draw in screen space. All the lines when centered on
+the horizon line create a convincing 3d effect!
+
+Ranging $v$ from the bottom of the line to the top of the line, we can sample
+the row of texture image array. Then using length $u$ where the ray intersects
+the cell, we can use this to sample the column of the texture image array.
+This allows us to texture different walls. Each cell can also contain different
+wall types to have different textures to sample from. We can store whether the
+wall was vertical or horizontal to shade it different as well. Despite the
+potential for additional features, I have already gained so much insight from
+this basic ray caster and have gained a deep appreciation behind the rendering
+engines that bring virtual worlds to life.
 
 ### Optimizations and Overcoming Hardware Limitations
 
