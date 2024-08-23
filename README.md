@@ -52,6 +52,8 @@ the scene. It supports custom bitmap textures and custom levels. This module
 is compiled into a C++ object by Verilator where it can be simulated by
 simulate.cpp with a virtual screen window created by SDL2.
 
+https://github.com/user-attachments/assets/fec09667-3092-4cfc-82f0-e17f7db96aea
+
 ### How Raycasting Works
 
 Firstly we have a level populated by N by M cells, and each cell has 4 walls.
