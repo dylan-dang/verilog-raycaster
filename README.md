@@ -196,7 +196,7 @@ $$
     y_{n + 1} =  y_n ({3 \over 2} - {x \over 2} y_n ^2 )
 $$
 
-So now, $`3 \over 2 $ can be stored as a constant and $ x \over 2`$ can be
+So now, $`3 \over 2`$ can be stored as a constant and $`x \over 2`$ can be
 calculated with a bit shift. With this, we are back to multiplication and
 addition! This equation is well known for its use in Quake III Arena. However,
 we don't have the luxury of exploiting the structure of floating point numbers
